@@ -1802,10 +1802,18 @@ fn apply_metadata_item_to_state(
                     guard.last_pvol_brightness = Some(brightness);
                     // active_palette_device locks runtime_config + reads
                     // the devices file — both quick. The actual HTTP write
-                    // runs on a blocking task so it doesn't stall metadata
-                    // processing.
+                    // is fire-and-forget on a plain OS thread so it doesn't
+                    // stall metadata processing if the device is slow or
+                    // unreachable.
+                    //
+                    // Important: this handler runs on the now-playing reader
+                    // thread, which is spawned via std::thread::spawn (NOT
+                    // inside the Tokio runtime). Calling
+                    // tokio::task::spawn_blocking from here panics with
+                    // "no reactor running". std::thread::spawn works
+                    // regardless of runtime presence.
                     if let Ok(device) = active_palette_device(state) {
-                        tokio::task::spawn_blocking(move || {
+                        std::thread::spawn(move || {
                             if let Err(err) = device.set_state(None, Some(brightness)) {
                                 eprintln!(
                                     "WARNING: pvol → brightness write failed (brightness={}): {}",
