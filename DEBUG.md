@@ -2,7 +2,7 @@
 
 ## Symptom
 
-On the Raspberry Pi, the **"audioleaf"** AirPlay receiver disappears from the
+On the Raspberry Pi, the **"nanoviz"** AirPlay receiver disappears from the
 iPhone/Mac AirPlay picker after audio is paused for a long time. Even
 `podman compose down && podman compose up -d` does not bring it back.
 
@@ -13,7 +13,7 @@ process that simply crashed.
 
 ## Why we can't diagnose it yet
 
-Out of the box, `podman logs audioleaf` only shows audioleaf's own output:
+Out of the box, `podman logs nanoviz` only shows nanoviz's own output:
 
 - `shairport-sync` defaults to syslog (no syslog daemon inside the container).
 - `nqptp` is started in the background but its stderr was inherited silently.
@@ -42,10 +42,10 @@ Run on the Pi.
 ### 1. Start with the diagnostic build and confirm logs
 
 ```sh
-cd /path/to/audioleaf
+cd /path/to/nanoviz
 podman compose -f containers/compose.yaml down
 podman compose -f containers/compose.yaml up -d
-podman logs -f audioleaf > /tmp/audioleaf-baseline.log &
+podman logs -f nanoviz > /tmp/nanoviz-baseline.log &
 ```
 
 Within ~5 seconds you should see entrypoint lines plus `shairport-sync`,
@@ -55,32 +55,32 @@ land — re-check the volume paths in `containers/compose.yaml`.
 ### 2. Capture a healthy baseline
 
 ```sh
-podman exec audioleaf /usr/local/bin/diag.sh > /tmp/healthy-baseline.txt 2>&1
+podman exec nanoviz /usr/local/bin/diag.sh > /tmp/healthy-baseline.txt 2>&1
 ```
 
 This is what "working" looks like. We diff it against the failure capture.
 
 ### 3. Reproduce the failure
 
-1. From iPhone/Mac, select **"audioleaf"** in the AirPlay picker.
+1. From iPhone/Mac, select **"nanoviz"** in the AirPlay picker.
 2. Play a track for ~30 seconds.
 3. **Pause.** Note the timestamp.
 4. Walk away. Check the picker every ~15 minutes.
 
-### 4. The instant "audioleaf" disappears from the picker
+### 4. The instant "nanoviz" disappears from the picker
 
 Don't fix anything yet. Capture state first:
 
 ```sh
 # Container-side state
-podman exec audioleaf /usr/local/bin/diag.sh > /tmp/failure-diag.txt 2>&1
+podman exec nanoviz /usr/local/bin/diag.sh > /tmp/failure-diag.txt 2>&1
 
 # Snapshot the streamed log up to the failure
-cp /tmp/audioleaf-baseline.log /tmp/failure-podman.log
+cp /tmp/nanoviz-baseline.log /tmp/failure-podman.log
 
 # Optional: from a SECOND device on the same network, confirm it's not just
 # the source device's mDNS cache lying:
-avahi-browse -ar -t | grep -i 'audioleaf'
+avahi-browse -ar -t | grep -i 'nanoviz'
 ```
 
 ### 5. Now test whether down/up recovers
@@ -89,11 +89,11 @@ avahi-browse -ar -t | grep -i 'audioleaf'
 podman compose -f containers/compose.yaml down
 podman compose -f containers/compose.yaml up -d
 sleep 15
-podman exec audioleaf /usr/local/bin/diag.sh > /tmp/failure-after-restart.txt 2>&1
+podman exec nanoviz /usr/local/bin/diag.sh > /tmp/failure-after-restart.txt 2>&1
 ```
 
 If `failure-after-restart.txt` shows shairport/avahi/nqptp running and mDNS
-advertising "audioleaf" but the iPhone/Mac picker still doesn't show it → it's
+advertising "nanoviz" but the iPhone/Mac picker still doesn't show it → it's
 a source-device cache issue, not a server issue. If it still doesn't show in
 `avahi-browse` from inside the container after restart → host-side state is
 poisoned (most likely).
@@ -107,7 +107,7 @@ Diff `failure-diag.txt` against `healthy-baseline.txt`:
   restart. Phase 2 = process supervisor (s6-overlay or simple restart loop) +
   read the stderr in `failure-podman.log` to find the crash reason.
 - **`shairport-sync` alive, but `avahi-browse` from inside the container
-  doesn't show "audioleaf"** → mDNS deregistration. Look at `avahi` lines in
+  doesn't show "nanoviz"** → mDNS deregistration. Look at `avahi` lines in
   `failure-podman.log` for "withdrawing" / "Server disappeared" / dbus errors.
   Phase 2 = avahi/dbus startup ordering or shairport mDNS renewal.
 - **`avahi-browse` shows it from inside the container, but the second device's
@@ -146,13 +146,13 @@ Diff `failure-diag.txt` against `healthy-baseline.txt`:
 ## Avahi "name collision, renaming to NAME #N" loop
 
 If the journal shows shairport-sync rapidly incrementing its mDNS service
-name (`audioleaf #2`, `#3`, `#4`, ...), the host avahi-daemon has a stale
+name (`nanoviz #2`, `#3`, `#4`, ...), the host avahi-daemon has a stale
 registration cached from a previous container run that didn't deregister.
 Fix in one shot:
 
 ```sh
 sudo systemctl restart avahi-daemon
-sudo systemctl restart audioleaf
+sudo systemctl restart nanoviz
 ```
 
 The container's entrypoint now traps SIGTERM and forwards it to

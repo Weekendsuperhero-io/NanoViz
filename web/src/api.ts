@@ -1,7 +1,7 @@
 export type HealthResponse = {
   status: string;
   version: string;
-  /** AirPlay receiver name (from AUDIOLEAF_AIRPLAY_NAME env var). Null when unset. */
+  /** AirPlay receiver name (from NANOVIZ_AIRPLAY_NAME env var). Null when unset. */
   airplay_name: string | null;
 };
 

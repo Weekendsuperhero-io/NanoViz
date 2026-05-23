@@ -4,6 +4,27 @@ All notable changes to this fork of audioleaf are documented in this file.
 
 This fork focuses on macOS compatibility, support for all Nanoleaf device types, and enhanced color palette features.
 
+## [4.0.0] — Renamed to NanoViz
+
+The project was renamed from **audioleaf** to **NanoViz** to reflect its
+shift from a terminal-only macOS tool to a Pi-first AirPlay appliance with
+a web control panel. Original audioleaf credit preserved in [NOTICE](NOTICE)
+and the README's Credits section. Breaking changes for existing installs:
+
+- Crate / binary / container image are now `nanoviz`. Old image path
+  `ghcr.io/weekendsuperhero-io/audioleaf` is dead; pull
+  `ghcr.io/weekendsuperhero-io/nanoviz` instead.
+- Env vars renamed: `AUDIOLEAF_*` → `NANOVIZ_*` (including
+  `NANOVIZ_AIRPLAY_NAME`, `NANOVIZ_FRONTEND_DIR`,
+  `NANOVIZ_SHAIRPORT_METADATA_PIPE`, `NANOVIZ_LOG_METADATA`).
+- Default config dir is now `~/.config/nanoviz/` (was
+  `~/.config/audioleaf/`). On Linux you can `mv` the old dir or pass
+  `--config-dir=~/.config/audioleaf` to keep using the old layout.
+- systemd unit, polkit rule, Quadlet filename, and container name all
+  default to `nanoviz` instead of `audioleaf`.
+- Default AirPlay receiver name is now `nanoviz`; override with
+  `pi/setup.sh --airplay-name="..."` as before.
+
 ## [3.5.0] - 2026-03-17
 
 ### Added
@@ -70,8 +91,8 @@ This fork focuses on macOS compatibility, support for all Nanoleaf device types,
 - **SSDP deduplication**: Prevent duplicate device entries when multiple SSDP responses are received for the same device
 
 - **macOS config directory support**: Properly handle macOS Application Support directory
-  - Config location: `~/Library/Application Support/audioleaf/`
-  - Device data location: `~/Library/Application Support/audioleaf/`
+  - Config location: `~/Library/Application Support/nanoviz/`
+  - Device data location: `~/Library/Application Support/nanoviz/`
   - Previous version assumed Linux-style `~/.config/` on all platforms
 
 - **Flexible config parsing**: Accept both integer and float values for `default_gain` in config.toml
@@ -80,7 +101,7 @@ This fork focuses on macOS compatibility, support for all Nanoleaf device types,
 
 - **Comprehensive documentation**:
   - Complete configuration reference with all options explained
-  - Platform-specific audio setup guides (macOS, Linux, Windows)
+  - Platform-specific audio setup guides (macOS, Linux)
   - Pre-made color palette examples using HSB color system
   - HSB color wheel reference (0-359 hue values)
   - Detailed troubleshooting section
@@ -125,7 +146,6 @@ This fork focuses on macOS compatibility, support for all Nanoleaf device types,
 
 - **Recommended gain values**: Updated documentation for audio devices
   - macOS BlackHole 2ch (targeted directly): `default_gain = 1`
-  - Windows VB Cable: `default_gain = 200-500` (may vary)
   - Physical microphones: `default_gain = 1-10`
   - Important: Target BlackHole 2ch directly, not the Multi-Output aggregate device
 
@@ -155,9 +175,8 @@ Panel filtering logic excludes controller units:
 
 | Platform | Config Path                                           | Device Data Path                                          |
 | -------- | ----------------------------------------------------- | --------------------------------------------------------- |
-| macOS    | `~/Library/Application Support/audioleaf/config.toml` | `~/Library/Application Support/audioleaf/nl_devices.toml` |
-| Linux    | `~/.config/audioleaf/config.toml`                     | `~/.config/audioleaf/nl_devices.toml`                     |
-| Windows  | `%APPDATA%\audioleaf\config.toml`                     | `%APPDATA%\audioleaf\nl_devices.toml`                     |
+| macOS    | `~/Library/Application Support/nanoviz/config.toml` | `~/Library/Application Support/nanoviz/nl_devices.toml` |
+| Linux    | `~/.config/nanoviz/config.toml`                     | `~/.config/nanoviz/nl_devices.toml`                     |
 
 ### Audio Gain Values
 
@@ -166,7 +185,6 @@ Recommended gain settings based on audio source:
 | Audio Source                  | Configuration                     | Recommended Gain |
 | ----------------------------- | --------------------------------- | ---------------- |
 | BlackHole 2ch (macOS, direct) | `audio_backend = "BlackHole 2ch"` | 1                |
-| VB Cable (Windows)            | Varies by setup                   | 200-500          |
 | Physical microphone           | Direct input                      | 1-10             |
 
 **Important for macOS users**: Set `audio_backend` to `"BlackHole 2ch"` (the virtual device itself), not the Multi-Output Device aggregate. This provides proper audio levels with `default_gain = 1`.

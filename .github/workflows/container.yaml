@@ -44,7 +44,7 @@ jobs:
 
     steps:
       - name: Resolve image name (lowercase)
-        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/audioleaf" >> "$GITHUB_ENV"
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/nanoviz" >> "$GITHUB_ENV"
 
       - name: Prepare platform pair
         id: platform
@@ -107,7 +107,7 @@ jobs:
       id-token: write
     steps:
       - name: Resolve image name (lowercase)
-        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/audioleaf" >> "$GITHUB_ENV"
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/nanoviz" >> "$GITHUB_ENV"
 
       - name: Download digests
         uses: actions/download-artifact@v4

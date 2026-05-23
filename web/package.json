@@ -1,5 +1,5 @@
 {
-  "name": "audioleaf-web",
+  "name": "nanoviz-web",
   "private": true,
   "version": "0.1.0",
   "packageManager": "pnpm@11.0.8",

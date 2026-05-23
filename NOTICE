@@ -1,0 +1,34 @@
+NanoViz
+=======
+
+NanoViz is a Raspberry Pi AirPlay receiver that drives Nanoleaf panels as a
+music visualizer.
+
+Fork lineage
+------------
+
+NanoViz is a fork of audioleaf:
+
+  audioleaf — https://github.com/alfazet/audioleaf
+  Copyright (c) Antoni Zasada
+  Licensed under the MIT License (see LICENSE).
+
+The audioleaf project provided the original Nanoleaf SSDP discovery, ALSA
+audio capture, FFT analysis, panel sorting / layout, and named-palette
+visualizer effects that NanoViz still uses today. The project was renamed
+to NanoViz when the focus shifted from a terminal-only macOS visualizer to
+a Raspberry Pi AirPlay appliance with a web control panel; the rename also
+reflects substantial new functionality (AirPlay 2 receiver via
+shairport-sync + nqptp, podman/Quadlet container deployment, web-UI device
+pairing, album-art palette extraction, AirPlay-volume-driven brightness,
+and the React control panel).
+
+Third-party components shipped in the published container image
+---------------------------------------------------------------
+
+- shairport-sync (https://github.com/mikebrady/shairport-sync) — GPL-2.0+
+- nqptp (https://github.com/mikebrady/nqptp) — GPL-3.0
+- avahi-daemon, dbus, ALSA, FFmpeg libs — see Debian package licenses.
+
+Audioleaf and NanoViz are released under the MIT License; see LICENSE for
+the full text.

@@ -63,7 +63,7 @@ struct ApiOptions {
 struct ApiState {
     config_file_path: Option<PathBuf>,
     devices_file_path: Option<PathBuf>,
-    runtime_config: Arc<Mutex<audioleaf::config::Config>>,
+    runtime_config: Arc<Mutex<nanoviz::config::Config>>,
     live_visualizer: Arc<Mutex<Option<LiveVisualizerRuntime>>>,
     live_visualizer_recovery: Arc<Mutex<LiveVisualizerRecoveryState>>,
     now_playing: Arc<Mutex<NowPlayingRuntimeState>>,
@@ -73,18 +73,18 @@ struct ApiState {
     palette_cache: Arc<Mutex<PaletteCacheSlot>>,
 }
 
-type PaletteCacheSlot = Option<(Instant, Vec<audioleaf::nanoleaf::NamedPalette>)>;
+type PaletteCacheSlot = Option<(Instant, Vec<nanoviz::nanoleaf::NamedPalette>)>;
 
 const PALETTE_CACHE_TTL: Duration = Duration::from_secs(300);
 
 #[derive(Clone, Debug)]
 struct LiveVisualizerRuntime {
-    sender: flume::Sender<audioleaf::visualizer::VisualizerMsg>,
+    sender: flume::Sender<nanoviz::visualizer::VisualizerMsg>,
     global_orientation: u16,
     device: DeviceSummary,
     color_rx: flume::Receiver<HashMap<u16, [u8; 3]>>,
     latest_colors: Arc<Mutex<HashMap<u16, [u8; 3]>>>,
-    stream_health: Arc<Mutex<audioleaf::visualizer::StreamHealth>>,
+    stream_health: Arc<Mutex<nanoviz::visualizer::StreamHealth>>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -360,7 +360,7 @@ struct HealthResponse {
     status: &'static str,
     version: &'static str,
     /// AirPlay receiver name advertised on mDNS. `None` when the
-    /// `AUDIOLEAF_AIRPLAY_NAME` env var is unset and shairport-sync falls
+    /// `NANOVIZ_AIRPLAY_NAME` env var is unset and shairport-sync falls
     /// back to its baked-in conf default ("audioleaf").
     airplay_name: Option<String>,
 }
@@ -376,7 +376,7 @@ struct PathsResponse {
 #[derive(Debug, Serialize)]
 struct ConfigResponse {
     paths: PathsResponse,
-    config: Option<audioleaf::config::Config>,
+    config: Option<nanoviz::config::Config>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -524,18 +524,24 @@ struct VisualizerStatusResponse {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Install the panic hook before anything that can panic. With
+    // `panic = "abort"` in Cargo.toml, a panic kills the process via
+    // SIGABRT (container exit 134); the hook is our only chance to flush
+    // a useful message to journald.
+    nanoviz::panic::register_backtrace_panic_handler();
+
     let options = ApiOptions::parse();
-    let ((resolved_config_path, config_exists), _) = audioleaf::config::resolve_paths(
+    let ((resolved_config_path, config_exists), _) = nanoviz::config::resolve_paths(
         options.config_file_path.clone(),
         options.devices_file_path.clone(),
     )?;
     let initial_config = if config_exists {
-        audioleaf::config::Config::parse_from_file(&resolved_config_path)?
+        nanoviz::config::Config::parse_from_file(&resolved_config_path)?
     } else {
-        audioleaf::config::Config::new(None, None)
+        nanoviz::config::Config::new(None, None)
     };
     #[cfg(target_os = "linux")]
-    let metadata_pipe_path = std::env::var("AUDIOLEAF_SHAIRPORT_METADATA_PIPE")
+    let metadata_pipe_path = std::env::var("NANOVIZ_SHAIRPORT_METADATA_PIPE")
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
@@ -605,10 +611,10 @@ async fn main() -> Result<()> {
                 .allow_headers(Any),
         );
 
-    // Serve the built frontend from web/dist/ (or AUDIOLEAF_FRONTEND_DIR override).
+    // Serve the built frontend from web/dist/ (or NANOVIZ_FRONTEND_DIR override).
     // Falls back to index.html for client-side SPA routing.
     let frontend_dir =
-        std::env::var("AUDIOLEAF_FRONTEND_DIR").unwrap_or_else(|_| "./web/dist".to_string());
+        std::env::var("NANOVIZ_FRONTEND_DIR").unwrap_or_else(|_| "./web/dist".to_string());
     let frontend_path = std::path::Path::new(&frontend_dir);
     let app = if frontend_path.is_dir() {
         let index = format!("{}/index.html", frontend_dir);
@@ -634,7 +640,7 @@ async fn get_health() -> Json<HealthResponse> {
     Json(HealthResponse {
         status: "ok",
         version: env!("CARGO_PKG_VERSION"),
-        airplay_name: std::env::var("AUDIOLEAF_AIRPLAY_NAME")
+        airplay_name: std::env::var("NANOVIZ_AIRPLAY_NAME")
             .ok()
             .filter(|name| !name.trim().is_empty()),
     })
@@ -675,7 +681,7 @@ async fn put_visualizer_effect(
     let paths = resolve_paths(&state)?;
     send_live_message_with_recovery(
         &state,
-        audioleaf::visualizer::VisualizerMsg::SetEffect(effect),
+        nanoviz::visualizer::VisualizerMsg::SetEffect(effect),
     )
     .await?;
 
@@ -705,7 +711,7 @@ async fn put_visualizer_palette(
     }
 
     let config = update_runtime_config(&state, |config| {
-        config.visualizer_config.color_source = Some(audioleaf::config::ColorSourceKind::Palette);
+        config.visualizer_config.color_source = Some(nanoviz::config::ColorSourceKind::Palette);
         config.visualizer_config.palette_name = Some(payload.palette_name.clone());
     })?;
 
@@ -713,7 +719,7 @@ async fn put_visualizer_palette(
     let paths = resolve_paths(&state)?;
     send_live_message_with_recovery(
         &state,
-        audioleaf::visualizer::VisualizerMsg::SetPalette(colors),
+        nanoviz::visualizer::VisualizerMsg::SetPalette(colors),
     )
     .await?;
 
@@ -728,8 +734,8 @@ async fn put_visualizer_color_source(
     Json(payload): Json<VisualizerColorSourceUpdateRequest>,
 ) -> ApiResult<ConfigResponse> {
     let kind = match payload.kind.to_ascii_lowercase().as_str() {
-        "palette" => audioleaf::config::ColorSourceKind::Palette,
-        "artwork" => audioleaf::config::ColorSourceKind::Artwork,
+        "palette" => nanoviz::config::ColorSourceKind::Palette,
+        "artwork" => nanoviz::config::ColorSourceKind::Artwork,
         other => {
             return Err(ApiError::bad_request(format!(
                 "color_source kind must be `palette` or `artwork`, got `{}`",
@@ -740,7 +746,7 @@ async fn put_visualizer_color_source(
 
     let config = update_runtime_config(&state, |config| {
         config.visualizer_config.color_source = Some(kind);
-        if kind == audioleaf::config::ColorSourceKind::Palette && payload.palette_name.is_some() {
+        if kind == nanoviz::config::ColorSourceKind::Palette && payload.palette_name.is_some() {
             config.visualizer_config.palette_name = payload.palette_name.clone();
         }
     })?;
@@ -748,17 +754,17 @@ async fn put_visualizer_color_source(
     let paths = resolve_paths(&state)?;
 
     match kind {
-        audioleaf::config::ColorSourceKind::Palette => {
+        nanoviz::config::ColorSourceKind::Palette => {
             let colors =
                 resolve_palette_colors_async(&state, config.visualizer_config.palette_name.clone())
                     .await;
             send_live_message_with_recovery(
                 &state,
-                audioleaf::visualizer::VisualizerMsg::SetPalette(colors),
+                nanoviz::visualizer::VisualizerMsg::SetPalette(colors),
             )
             .await?;
         }
-        audioleaf::config::ColorSourceKind::Artwork => {
+        nanoviz::config::ColorSourceKind::Artwork => {
             // If we already have artwork colors cached, push them now. Otherwise
             // leave the panels on whatever palette is current — the next now-
             // playing update will swap in artwork colors via apply_artwork_palette.
@@ -766,7 +772,7 @@ async fn put_visualizer_color_source(
             if !colors.is_empty() {
                 send_live_message_with_recovery(
                     &state,
-                    audioleaf::visualizer::VisualizerMsg::SetPalette(colors),
+                    nanoviz::visualizer::VisualizerMsg::SetPalette(colors),
                 )
                 .await?;
             }
@@ -799,7 +805,7 @@ async fn put_visualizer_sort(
     let live = ensure_live_visualizer(&state).await?;
     send_live_message_with_recovery(
         &state,
-        audioleaf::visualizer::VisualizerMsg::SetSorting {
+        nanoviz::visualizer::VisualizerMsg::SetSorting {
             primary_axis,
             sort_primary,
             sort_secondary,
@@ -889,28 +895,28 @@ async fn put_visualizer_settings(
         if let Some(freq_range) = payload.freq_range {
             send_live_message_with_recovery(
                 &state,
-                audioleaf::visualizer::VisualizerMsg::SetFreqRange(freq_range.0, freq_range.1),
+                nanoviz::visualizer::VisualizerMsg::SetFreqRange(freq_range.0, freq_range.1),
             )
             .await?;
         }
         if let Some(default_gain) = payload.default_gain {
             send_live_message_with_recovery(
                 &state,
-                audioleaf::visualizer::VisualizerMsg::SetGain(default_gain),
+                nanoviz::visualizer::VisualizerMsg::SetGain(default_gain),
             )
             .await?;
         }
         if let Some(transition_time) = payload.transition_time {
             send_live_message_with_recovery(
                 &state,
-                audioleaf::visualizer::VisualizerMsg::SetTransitionTime(transition_time),
+                nanoviz::visualizer::VisualizerMsg::SetTransitionTime(transition_time),
             )
             .await?;
         }
         if let Some(time_window) = payload.time_window {
             send_live_message_with_recovery(
                 &state,
-                audioleaf::visualizer::VisualizerMsg::SetTimeWindow(time_window),
+                nanoviz::visualizer::VisualizerMsg::SetTimeWindow(time_window),
             )
             .await?;
         }
@@ -959,7 +965,7 @@ async fn get_devices(State(state): State<ApiState>) -> ApiResult<DevicesResponse
     let paths = resolve_paths(&state)?;
 
     let devices = if paths.devices_file_exists {
-        audioleaf::nanoleaf::NlDevice::all_from_file(
+        nanoviz::nanoleaf::NlDevice::all_from_file(
             PathBuf::from(&paths.devices_file_path).as_path(),
         )
         .map_err(ApiError::internal)?
@@ -983,7 +989,7 @@ async fn get_devices(State(state): State<ApiState>) -> ApiResult<DevicesResponse
 async fn post_devices_discover(State(_state): State<ApiState>) -> ApiResult<DiscoverResponse> {
     // ssdp_msearch is blocking UDP with a 10s timeout — keep it off the
     // async runtime.
-    let (names, ips) = tokio::task::spawn_blocking(audioleaf::ssdp::ssdp_msearch)
+    let (names, ips) = tokio::task::spawn_blocking(nanoviz::ssdp::ssdp_msearch)
         .await
         .map_err(handle_join_error)?
         .map_err(ApiError::internal)?;
@@ -1012,7 +1018,7 @@ async fn post_devices_pair(
     let paths = resolve_paths(&state)?;
     let devices_path = PathBuf::from(&paths.devices_file_path);
 
-    let device = tokio::task::spawn_blocking(move || audioleaf::nanoleaf::NlDevice::new(ip))
+    let device = tokio::task::spawn_blocking(move || nanoviz::nanoleaf::NlDevice::new(ip))
         .await
         .map_err(handle_join_error)?
         .map_err(|err| {
@@ -1077,7 +1083,7 @@ async fn get_device_layout(
     })
     .await?;
 
-    let panels = audioleaf::layout_visualizer::parse_layout(&layout_json)
+    let panels = nanoviz::layout_visualizer::parse_layout(&layout_json)
         .map_err(ApiError::internal)?
         .into_iter()
         .map(|panel| DeviceLayoutPanel {
@@ -1156,13 +1162,13 @@ async fn get_audio_backends(State(state): State<ApiState>) -> ApiResult<AudioBac
         .audio_backend;
 
     let mut available_audio_backends =
-        audioleaf::audio::list_input_backend_names().unwrap_or_else(|_| Vec::new());
+        nanoviz::audio::list_input_backend_names().unwrap_or_else(|_| Vec::new());
 
     if !available_audio_backends
         .iter()
-        .any(|name| name == audioleaf::constants::DEFAULT_AUDIO_BACKEND)
+        .any(|name| name == nanoviz::constants::DEFAULT_AUDIO_BACKEND)
     {
-        available_audio_backends.insert(0, audioleaf::constants::DEFAULT_AUDIO_BACKEND.to_string());
+        available_audio_backends.insert(0, nanoviz::constants::DEFAULT_AUDIO_BACKEND.to_string());
     }
 
     Ok(Json(AudioBackendsResponse {
@@ -1252,7 +1258,7 @@ async fn get_visualizer_status(
     let device = live.as_ref().map(|runtime| runtime.device.clone());
     let stream_health = match live {
         Some(runtime) => *runtime.stream_health.lock(),
-        None => audioleaf::visualizer::StreamHealth::Restarting,
+        None => nanoviz::visualizer::StreamHealth::Restarting,
     };
 
     let restart_cooldown_active = live_visualizer_restart_cooldown_remaining(&state)?.is_some();
@@ -1360,12 +1366,6 @@ fn start_now_playing_reader(state: &ApiState) {
     });
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
-fn start_now_playing_reader(_state: &ApiState) {
-    // No platform-specific now-playing source on Windows / other targets.
-    // The API still serves cached snapshots; the reader is just a no-op.
-}
-
 #[cfg(target_os = "linux")]
 fn start_now_playing_reader(state: &ApiState) {
     // Spawn the cover-art color-extraction worker once. The reader loop hands
@@ -1433,7 +1433,7 @@ async fn run_live_visualizer_watchdog_tick(state: &ApiState) -> Result<(), ApiEr
     let should_recover = match current_live_visualizer(state)? {
         Some(runtime) => runtime
             .sender
-            .send(audioleaf::visualizer::VisualizerMsg::Ping)
+            .send(nanoviz::visualizer::VisualizerMsg::Ping)
             .is_err(),
         None => true,
     };
@@ -1459,7 +1459,7 @@ fn has_paired_devices(state: &ApiState) -> Result<bool, ApiError> {
     }
     let devices_path = PathBuf::from(&paths.devices_file_path);
     let devices =
-        audioleaf::nanoleaf::NlDevice::all_from_file(&devices_path).map_err(ApiError::internal)?;
+        nanoviz::nanoleaf::NlDevice::all_from_file(&devices_path).map_err(ApiError::internal)?;
     Ok(!devices.is_empty())
 }
 
@@ -1525,7 +1525,7 @@ fn start_pict_worker(state: ApiState) -> flume::Sender<PictJob> {
                 job = newer;
             }
 
-            let colors = audioleaf::now_playing::extract_prominent_colors_from_bytes(&job.bytes)
+            let colors = nanoviz::now_playing::extract_prominent_colors_from_bytes(&job.bytes)
                 .unwrap_or_default();
 
             let applied = {
@@ -1946,7 +1946,7 @@ fn detect_image_mime_type(bytes: &[u8]) -> Option<&'static str> {
 
 #[cfg(target_os = "macos")]
 fn extract_prominent_colors(image_bytes: &[u8]) -> Option<Vec<[u8; 3]>> {
-    audioleaf::now_playing::extract_prominent_colors_from_bytes(image_bytes)
+    nanoviz::now_playing::extract_prominent_colors_from_bytes(image_bytes)
 }
 
 fn now_unix_ms() -> u64 {
@@ -1956,13 +1956,13 @@ fn now_unix_ms() -> u64 {
     }
 }
 
-/// True when AUDIOLEAF_LOG_METADATA is set to a truthy value. Cached on first
+/// True when NANOVIZ_LOG_METADATA is set to a truthy value. Cached on first
 /// read — toggling at runtime requires a process restart.
 #[allow(dead_code)] // Only consumed by the Linux shairport-metadata path.
 fn metadata_logging_enabled() -> bool {
     static FLAG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *FLAG.get_or_init(|| {
-        std::env::var("AUDIOLEAF_LOG_METADATA")
+        std::env::var("NANOVIZ_LOG_METADATA")
             .ok()
             .map(|v| !matches!(v.as_str(), "" | "0" | "false" | "no"))
             .unwrap_or(false)
@@ -1971,7 +1971,7 @@ fn metadata_logging_enabled() -> bool {
 
 /// Log an ad-hoc metadata-stream event. Rendering a preview of the payload
 /// (UTF-8 if printable, hex-bytes otherwise, truncated for large blobs).
-/// No-op unless AUDIOLEAF_LOG_METADATA is set.
+/// No-op unless NANOVIZ_LOG_METADATA is set.
 #[allow(dead_code)] // Only consumed by the Linux shairport-metadata path.
 fn log_metadata_event(message: &str, payload: Option<&[u8]>) {
     if !metadata_logging_enabled() {
@@ -1999,7 +1999,7 @@ fn log_metadata_event(message: &str, payload: Option<&[u8]>) {
 
 fn resolve_paths(state: &ApiState) -> Result<PathsResponse, ApiError> {
     let ((config_file_path, config_file_exists), (devices_file_path, devices_file_exists)) =
-        audioleaf::config::resolve_paths(
+        nanoviz::config::resolve_paths(
             state.config_file_path.clone(),
             state.devices_file_path.clone(),
         )
@@ -2016,7 +2016,7 @@ fn resolve_paths(state: &ApiState) -> Result<PathsResponse, ApiError> {
 fn load_device_by_name(
     state: &ApiState,
     name: &str,
-) -> Result<audioleaf::nanoleaf::NlDevice, ApiError> {
+) -> Result<nanoviz::nanoleaf::NlDevice, ApiError> {
     let paths = resolve_paths(state)?;
     if !paths.devices_file_exists {
         return Err(ApiError::not_found(format!(
@@ -2025,11 +2025,11 @@ fn load_device_by_name(
         )));
     }
     let devices_path = PathBuf::from(&paths.devices_file_path);
-    audioleaf::nanoleaf::NlDevice::find_in_file(&devices_path, Some(name))
+    nanoviz::nanoleaf::NlDevice::find_in_file(&devices_path, Some(name))
         .map_err(|err| ApiError::not_found(err.to_string()))
 }
 
-fn get_runtime_config_clone(state: &ApiState) -> Result<audioleaf::config::Config, ApiError> {
+fn get_runtime_config_clone(state: &ApiState) -> Result<nanoviz::config::Config, ApiError> {
     let guard = state.runtime_config.lock();
     Ok(guard.clone())
 }
@@ -2037,7 +2037,7 @@ fn get_runtime_config_clone(state: &ApiState) -> Result<audioleaf::config::Confi
 /// Resolve the `NlDevice` we should pull palettes from. Uses
 /// `default_nl_device_name` from config if set; otherwise the first device in
 /// `nl_devices.toml`.
-fn active_palette_device(state: &ApiState) -> Result<audioleaf::nanoleaf::NlDevice, ApiError> {
+fn active_palette_device(state: &ApiState) -> Result<nanoviz::nanoleaf::NlDevice, ApiError> {
     let config = get_runtime_config_clone(state)?;
     let paths = resolve_paths(state)?;
     if !paths.devices_file_exists {
@@ -2048,14 +2048,14 @@ fn active_palette_device(state: &ApiState) -> Result<audioleaf::nanoleaf::NlDevi
     }
     let devices_path = PathBuf::from(&paths.devices_file_path);
     let preferred = config.default_nl_device_name.as_deref();
-    audioleaf::nanoleaf::NlDevice::find_in_file(&devices_path, preferred)
+    nanoviz::nanoleaf::NlDevice::find_in_file(&devices_path, preferred)
         .map_err(|err| ApiError::not_found(err.to_string()))
 }
 
 /// Read palettes from cache. Refreshes from the device if missing or stale.
 /// Returns an empty Vec on device-fetch failure rather than failing the
 /// caller — palette lookups should degrade gracefully when the device is off.
-fn palettes_cached(state: &ApiState) -> Vec<audioleaf::nanoleaf::NamedPalette> {
+fn palettes_cached(state: &ApiState) -> Vec<nanoviz::nanoleaf::NamedPalette> {
     {
         let guard = state.palette_cache.lock();
         if let Some((fetched_at, palettes)) = guard.as_ref()
@@ -2109,7 +2109,7 @@ fn resolve_palette_colors(state: &ApiState, name: Option<&str>) -> Vec<[u8; 3]> 
     }
 
     // Last resort: hard-coded gradient, used at startup if device is offline.
-    Vec::from(audioleaf::constants::DEFAULT_COLORS)
+    Vec::from(nanoviz::constants::DEFAULT_COLORS)
 }
 
 /// Async wrapper around [`palettes_cached`] for use from `async fn` handlers.
@@ -2117,7 +2117,7 @@ fn resolve_palette_colors(state: &ApiState, name: Option<&str>) -> Vec<[u8; 3]> 
 /// `spawn_blocking` it would pin a tokio worker for the duration of the
 /// device round-trip (often seconds when the Pi/Nanoleaf are slow), and
 /// enough of those at once will starve the runtime.
-async fn palettes_cached_async(state: &ApiState) -> Vec<audioleaf::nanoleaf::NamedPalette> {
+async fn palettes_cached_async(state: &ApiState) -> Vec<nanoviz::nanoleaf::NamedPalette> {
     let state = state.clone();
     tokio::task::spawn_blocking(move || palettes_cached(&state))
         .await
@@ -2142,7 +2142,7 @@ fn apply_artwork_palette(state: &ApiState) {
     };
     if !matches!(
         config.visualizer_config.color_source,
-        Some(audioleaf::config::ColorSourceKind::Artwork)
+        Some(nanoviz::config::ColorSourceKind::Artwork)
     ) {
         return;
     }
@@ -2160,7 +2160,7 @@ fn apply_artwork_palette(state: &ApiState) {
     let n = colors.len();
     if let Err(err) = runtime
         .sender
-        .send(audioleaf::visualizer::VisualizerMsg::SetPalette(colors))
+        .send(nanoviz::visualizer::VisualizerMsg::SetPalette(colors))
     {
         // TODO: remove after song-change bug confirmed
         eprintln!("WARN: SetPalette send failed n={} err={}", n, err);
@@ -2179,15 +2179,15 @@ fn send_blackout(state: &ApiState) {
     };
     let _ = runtime
         .sender
-        .send(audioleaf::visualizer::VisualizerMsg::Blackout);
+        .send(nanoviz::visualizer::VisualizerMsg::Blackout);
 }
 
 fn update_runtime_config<F>(
     state: &ApiState,
     updater: F,
-) -> Result<audioleaf::config::Config, ApiError>
+) -> Result<nanoviz::config::Config, ApiError>
 where
-    F: FnOnce(&mut audioleaf::config::Config),
+    F: FnOnce(&mut nanoviz::config::Config),
 {
     let mut guard = state.runtime_config.lock();
     updater(&mut guard);
@@ -2284,7 +2284,7 @@ async fn recover_live_visualizer(state: &ApiState, reason: &str) -> Result<(), A
     let configured_backend = get_runtime_config_clone(state)?
         .visualizer_config
         .audio_backend
-        .unwrap_or_else(|| audioleaf::constants::DEFAULT_AUDIO_BACKEND.to_string());
+        .unwrap_or_else(|| nanoviz::constants::DEFAULT_AUDIO_BACKEND.to_string());
 
     match restart_live_visualizer(state).await {
         Ok(()) => {
@@ -2299,7 +2299,7 @@ async fn recover_live_visualizer(state: &ApiState, reason: &str) -> Result<(), A
             );
 
             let should_try_default_fallback = configured_backend
-                != audioleaf::constants::DEFAULT_AUDIO_BACKEND
+                != nanoviz::constants::DEFAULT_AUDIO_BACKEND
                 && failure_count >= LIVE_VISUALIZER_RESTART_FAILURE_LIMIT;
             if !should_try_default_fallback {
                 return Err(primary_err);
@@ -2309,11 +2309,11 @@ async fn recover_live_visualizer(state: &ApiState, reason: &str) -> Result<(), A
 
     eprintln!(
         "WARNING: falling back live visualizer backend to '{}' after repeated restart failures.",
-        audioleaf::constants::DEFAULT_AUDIO_BACKEND
+        nanoviz::constants::DEFAULT_AUDIO_BACKEND
     );
     update_runtime_config(state, |config| {
         config.visualizer_config.audio_backend =
-            Some(audioleaf::constants::DEFAULT_AUDIO_BACKEND.to_string());
+            Some(nanoviz::constants::DEFAULT_AUDIO_BACKEND.to_string());
     })?;
     mark_live_visualizer_restart_attempt(state)?;
     restart_live_visualizer(state).await?;
@@ -2323,7 +2323,7 @@ async fn recover_live_visualizer(state: &ApiState, reason: &str) -> Result<(), A
 
 async fn send_live_message_with_recovery(
     state: &ApiState,
-    message: audioleaf::visualizer::VisualizerMsg,
+    message: nanoviz::visualizer::VisualizerMsg,
 ) -> Result<(), ApiError> {
     let live = ensure_live_visualizer(state).await?;
     if live.sender.send(message.clone()).is_ok() {
@@ -2355,7 +2355,7 @@ fn restart_live_visualizer_sync(state: &ApiState) -> Result<(), ApiError> {
     if let Some(old_runtime) = old_runtime {
         let _ = old_runtime
             .sender
-            .send(audioleaf::visualizer::VisualizerMsg::End);
+            .send(nanoviz::visualizer::VisualizerMsg::End);
     }
     Ok(())
 }
@@ -2372,7 +2372,7 @@ fn build_live_visualizer(state: &ApiState) -> Result<LiveVisualizerRuntime, ApiE
 
     let devices_path = PathBuf::from(&paths.devices_file_path);
     let known_devices =
-        audioleaf::nanoleaf::NlDevice::all_from_file(&devices_path).map_err(ApiError::internal)?;
+        nanoviz::nanoleaf::NlDevice::all_from_file(&devices_path).map_err(ApiError::internal)?;
     if known_devices.is_empty() {
         return Err(ApiError::not_found(format!(
             "No Nanoleaf devices found in {}",
@@ -2414,12 +2414,12 @@ fn build_live_visualizer(state: &ApiState) -> Result<LiveVisualizerRuntime, ApiE
         .unwrap_or(0) as u16;
 
     let configured_backend = config.visualizer_config.audio_backend.clone();
-    let audio_stream = match audioleaf::audio::AudioStream::new(configured_backend.as_deref()) {
+    let audio_stream = match nanoviz::audio::AudioStream::new(configured_backend.as_deref()) {
         Ok(stream) => stream,
         Err(primary_err) => {
             let should_try_default = configured_backend
                 .as_deref()
-                .is_some_and(|name| name != audioleaf::constants::DEFAULT_AUDIO_BACKEND);
+                .is_some_and(|name| name != nanoviz::constants::DEFAULT_AUDIO_BACKEND);
             if !should_try_default {
                 return Err(ApiError::internal(primary_err));
             }
@@ -2428,21 +2428,21 @@ fn build_live_visualizer(state: &ApiState) -> Result<LiveVisualizerRuntime, ApiE
                 "WARNING: Failed to initialize audio backend '{}': {}. Falling back to '{}'.",
                 configured_backend.as_deref().unwrap_or("unknown"),
                 primary_err,
-                audioleaf::constants::DEFAULT_AUDIO_BACKEND
+                nanoviz::constants::DEFAULT_AUDIO_BACKEND
             );
-            audioleaf::audio::AudioStream::new(Some(audioleaf::constants::DEFAULT_AUDIO_BACKEND))
+            nanoviz::audio::AudioStream::new(Some(nanoviz::constants::DEFAULT_AUDIO_BACKEND))
                 .map_err(ApiError::internal)?
         }
     };
 
     let (color_tx, color_rx) = flume::bounded(1);
-    let stream_health = Arc::new(Mutex::new(audioleaf::visualizer::StreamHealth::Starting));
+    let stream_health = Arc::new(Mutex::new(nanoviz::visualizer::StreamHealth::Starting));
 
     // Resolve initial hues from the configured color source. For Artwork mode
     // and any case where the palette can't be looked up, the visualizer's
     // own fallback (DEFAULT_COLORS) kicks in via empty input.
     let initial_hues = match config.visualizer_config.color_source {
-        Some(audioleaf::config::ColorSourceKind::Artwork) => {
+        Some(nanoviz::config::ColorSourceKind::Artwork) => {
             // Use any current artwork colors; otherwise an empty Vec triggers
             // the visualizer's own DEFAULT_COLORS fallback. Subsequent now-
             // playing updates push artwork colors live via apply_artwork_palette.
@@ -2451,7 +2451,7 @@ fn build_live_visualizer(state: &ApiState) -> Result<LiveVisualizerRuntime, ApiE
         _ => resolve_palette_colors(state, config.visualizer_config.palette_name.as_deref()),
     };
 
-    let visualizer = audioleaf::visualizer::Visualizer::new(
+    let visualizer = nanoviz::visualizer::Visualizer::new(
         config.visualizer_config,
         audio_stream,
         &nl_device,
@@ -2480,53 +2480,53 @@ fn build_live_visualizer(state: &ApiState) -> Result<LiveVisualizerRuntime, ApiE
     })
 }
 
-fn parse_axis(input: &str) -> Option<audioleaf::config::Axis> {
+fn parse_axis(input: &str) -> Option<nanoviz::config::Axis> {
     if input.eq_ignore_ascii_case("x") {
-        Some(audioleaf::config::Axis::X)
+        Some(nanoviz::config::Axis::X)
     } else if input.eq_ignore_ascii_case("y") {
-        Some(audioleaf::config::Axis::Y)
+        Some(nanoviz::config::Axis::Y)
     } else {
         None
     }
 }
 
-fn parse_sort(input: &str) -> Option<audioleaf::config::Sort> {
+fn parse_sort(input: &str) -> Option<nanoviz::config::Sort> {
     if input.eq_ignore_ascii_case("asc") {
-        Some(audioleaf::config::Sort::Asc)
+        Some(nanoviz::config::Sort::Asc)
     } else if input.eq_ignore_ascii_case("desc") {
-        Some(audioleaf::config::Sort::Desc)
+        Some(nanoviz::config::Sort::Desc)
     } else {
         None
     }
 }
 
-fn parse_effect(input: &str) -> Option<audioleaf::config::Effect> {
+fn parse_effect(input: &str) -> Option<nanoviz::config::Effect> {
     match input {
-        x if x.eq_ignore_ascii_case("spectrum") => Some(audioleaf::config::Effect::Spectrum),
+        x if x.eq_ignore_ascii_case("spectrum") => Some(nanoviz::config::Effect::Spectrum),
         x if x.eq_ignore_ascii_case("energywave")
             || x.eq_ignore_ascii_case("energy_wave")
             || x.eq_ignore_ascii_case("energy-wave") =>
         {
-            Some(audioleaf::config::Effect::EnergyWave)
+            Some(nanoviz::config::Effect::EnergyWave)
         }
-        x if x.eq_ignore_ascii_case("ripple") => Some(audioleaf::config::Effect::Ripple),
+        x if x.eq_ignore_ascii_case("ripple") => Some(nanoviz::config::Effect::Ripple),
         _ => None,
     }
 }
 
-fn stream_health_label(stream_health: audioleaf::visualizer::StreamHealth) -> &'static str {
+fn stream_health_label(stream_health: nanoviz::visualizer::StreamHealth) -> &'static str {
     match stream_health {
-        audioleaf::visualizer::StreamHealth::Starting => "Starting",
-        audioleaf::visualizer::StreamHealth::Healthy => "Healthy",
-        audioleaf::visualizer::StreamHealth::Degraded => "Degraded",
-        audioleaf::visualizer::StreamHealth::Restarting => "Restarting",
-        audioleaf::visualizer::StreamHealth::Stopped => "Stopped",
+        nanoviz::visualizer::StreamHealth::Starting => "Starting",
+        nanoviz::visualizer::StreamHealth::Healthy => "Healthy",
+        nanoviz::visualizer::StreamHealth::Degraded => "Degraded",
+        nanoviz::visualizer::StreamHealth::Restarting => "Restarting",
+        nanoviz::visualizer::StreamHealth::Stopped => "Stopped",
     }
 }
 
 fn summarize_visualizer_status(
     live_visualizer_attached: bool,
-    stream_health: audioleaf::visualizer::StreamHealth,
+    stream_health: nanoviz::visualizer::StreamHealth,
     consecutive_restart_failures: u32,
 ) -> &'static str {
     if !live_visualizer_attached {
@@ -2534,17 +2534,17 @@ fn summarize_visualizer_status(
     }
 
     match stream_health {
-        audioleaf::visualizer::StreamHealth::Healthy => {
+        nanoviz::visualizer::StreamHealth::Healthy => {
             if consecutive_restart_failures > 0 {
                 "Degraded"
             } else {
                 "Healthy"
             }
         }
-        audioleaf::visualizer::StreamHealth::Degraded => "Degraded",
-        audioleaf::visualizer::StreamHealth::Starting
-        | audioleaf::visualizer::StreamHealth::Restarting
-        | audioleaf::visualizer::StreamHealth::Stopped => "Restarting",
+        nanoviz::visualizer::StreamHealth::Degraded => "Degraded",
+        nanoviz::visualizer::StreamHealth::Starting
+        | nanoviz::visualizer::StreamHealth::Restarting
+        | nanoviz::visualizer::StreamHealth::Stopped => "Restarting",
     }
 }
 

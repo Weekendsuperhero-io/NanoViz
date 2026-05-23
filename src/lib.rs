@@ -1,3 +1,9 @@
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+compile_error!(
+    "nanoviz supports Linux (the prod target — Raspberry Pi container) and \
+     macOS (dev). Other targets are unsupported."
+);
+
 pub mod audio;
 pub mod config;
 pub mod constants;

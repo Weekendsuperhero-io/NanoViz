@@ -37,7 +37,7 @@ type LoadState = "idle" | "loading" | "ready" | "error";
 const DEFAULT_BRIGHTNESS_DRAFT = "50";
 const EFFECT_OPTIONS = ["Spectrum", "EnergyWave", "Ripple"] as const;
 
-const LS_SHOW_LIVE_PREVIEW = "audioleaf.show_live_preview";
+const LS_SHOW_LIVE_PREVIEW = "nanoviz.show_live_preview";
 
 function readLocalBool(key: string, fallback: boolean): boolean {
   if (typeof window === "undefined") return fallback;
@@ -364,6 +364,8 @@ function App() {
   useEffect(() => {
     if (typeof window === "undefined") return;
     try {
+      // Also clean up the legacy "audioleaf.*" key from pre-rename installs.
+      window.localStorage.removeItem("nanoviz.drive_visualizer_palette");
       window.localStorage.removeItem("audioleaf.drive_visualizer_palette");
     } catch {
       // ignore — older browsers / private mode
@@ -1889,7 +1891,15 @@ function DeviceLayoutViewer({
       // Match the cluster rotation so polygons align with their (rotated)
       // centers — otherwise hexagons share centers but not edges, producing
       // a visible per-panel tilt of (globalOrientation mod 60)°.
-      orientation: panel.orientation - layout.global_orientation,
+      //
+      // Sign note: the center rotation uses `angle = -globalOrientation` and
+      // its result is then Y-flipped at sy = height - (ry*scale + offsetY),
+      // which converts the math-CCW rotation into a screen-CW one. The
+      // polygon renderer (sx + r*cos, sy + r*sin) ALSO walks CW in screen
+      // coords because of the Y-flip. So to rotate the polygon the same
+      // visual direction as the centers, we ADD globalOrientation (not
+      // subtract it).
+      orientation: panel.orientation + layout.global_orientation,
       sx,
       sy,
       scaledRadius: radius * scale,

@@ -1,13 +1,15 @@
 [package]
-name = "audioleaf"
+name = "nanoviz"
 version = "4.0.0"
 edition = "2024"
+# Forked from audioleaf by Antoni Zasada (https://github.com/AntoniZasada/audioleaf).
+# See NOTICE for fork lineage.
 authors = ["Antoni Zasada", "weekendsuperhero"]
-description = "Manage your Nanoleaf devices (Canvas, Shapes, Elements, Light Panels) and visualize music straight from the terminal"
-keywords = ["audio", "music", "nanoleaf", "visualizer"]
+description = "Raspberry Pi AirPlay receiver that drives Nanoleaf panels as a music visualizer (forked from audioleaf)"
+keywords = ["audio", "music", "nanoleaf", "visualizer", "airplay"]
 license = "MIT"
 readme = "README.md"
-repository = "https://github.com/weekendsuperhero-io/audioleaf"
+repository = "https://github.com/weekendsuperhero-io/nanoviz"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

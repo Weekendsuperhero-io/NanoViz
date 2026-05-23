@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# audioleaf — Raspberry Pi container setup (podman only).
+# nanoviz — Raspberry Pi container setup (podman only).
 #
 # Usage:
 #   sudo ./pi/setup.sh                      # full install + deploy
-#   curl -fsSL https://raw.githubusercontent.com/Weekendsuperhero-io/audioleaf/main/pi/setup.sh | sudo bash
+#   curl -fsSL https://raw.githubusercontent.com/Weekendsuperhero-io/nanoviz/main/pi/setup.sh | sudo bash
 #
 # Flags:
-#   --name=NAME           instance name (default "audioleaf"). Controls the
+#   --name=NAME           instance name (default "nanoviz"). Controls the
 #                         systemd unit (NAME.service), container name, Quadlet
 #                         filename (NAME.container), polkit rule, and the
 #                         default config dir (~/.config/NAME). Use a distinct
@@ -30,10 +30,10 @@ DEPLOY=1
 FORCE_COMPOSE=0
 CONFIG_DIR=""           # resolved after preflight; "" means "pick default"
 IMAGE_TAG=""
-INSTANCE_NAME="audioleaf"
+INSTANCE_NAME="nanoviz"
 AIRPLAY_NAME=""
-COMPOSE_URL="https://raw.githubusercontent.com/Weekendsuperhero-io/audioleaf/main/containers/compose.yaml"
-QUADLET_URL="https://raw.githubusercontent.com/Weekendsuperhero-io/audioleaf/main/containers/audioleaf.container"
+COMPOSE_URL="https://raw.githubusercontent.com/Weekendsuperhero-io/nanoviz/main/containers/compose.yaml"
+QUADLET_URL="https://raw.githubusercontent.com/Weekendsuperhero-io/nanoviz/main/containers/nanoviz.container"
 
 TARGET_USER="${SUDO_USER:-${USER:-}}"
 SCRIPT_DIR=""
@@ -183,7 +183,7 @@ if [[ -n "$TARGET_USER" ]]; then
     current_groups="$(id -nG "$TARGET_USER" 2>/dev/null || echo "")"
     # audio  — ALSA device access for native runs
     # render — some Pi GPU/audio paths use it
-    # systemd-journal — read system journal without sudo (`journalctl -fu audioleaf`)
+    # systemd-journal — read system journal without sudo (`journalctl -fu nanoviz`)
     for grp in audio render systemd-journal; do
         if getent group "$grp" >/dev/null; then
             if [[ " $current_groups " == *" $grp "* ]]; then
@@ -273,7 +273,7 @@ fi
 # Rewrite the image: tag in the staged compose. The in-repo file always pins
 # :latest; the installer swaps it for whatever detect_image_tag picked.
 if [[ -f "$compose_dest" && "$IMAGE_TAG" != "latest" ]]; then
-    sed -i "s|\(image: ghcr.io/weekendsuperhero-io/audioleaf:\)latest|\1${IMAGE_TAG}|" \
+    sed -i "s|\(image: ghcr.io/weekendsuperhero-io/nanoviz:\)latest|\1${IMAGE_TAG}|" \
         "$compose_dest"
 fi
 
@@ -303,8 +303,8 @@ if (( DEPLOY )) && (( ENABLE_SYSTEMD )); then
 
     # Source for the Quadlet template: prefer local clone, else fetch from main.
     local_quadlet=""
-    if [[ -n "$SCRIPT_DIR" && -f "$SCRIPT_DIR/../containers/audioleaf.container" ]]; then
-        local_quadlet="$SCRIPT_DIR/../containers/audioleaf.container"
+    if [[ -n "$SCRIPT_DIR" && -f "$SCRIPT_DIR/../containers/nanoviz.container" ]]; then
+        local_quadlet="$SCRIPT_DIR/../containers/nanoviz.container"
     fi
 
     quadlet_dir="/etc/containers/systemd"
@@ -323,25 +323,25 @@ if (( DEPLOY )) && (( ENABLE_SYSTEMD )); then
         log "Fetched Quadlet from $QUADLET_URL."
     fi
 
-    # Substitute the volume mount (template default: /etc/audioleaf/config),
+    # Substitute the volume mount (template default: /etc/nanoviz/config),
     # the image tag (template default: :latest), and the container name
-    # (template default: ContainerName=audioleaf) so multiple --name=
+    # (template default: ContainerName=nanoviz) so multiple --name=
     # instances don't collide on the host.
     sed_args=()
-    if [[ "$CONFIG_DIR" != "/etc/audioleaf" ]]; then
-        sed_args+=(-e "s|^Volume=/etc/audioleaf/config:|Volume=${CONFIG_DIR}/config:|")
+    if [[ "$CONFIG_DIR" != "/etc/nanoviz" ]]; then
+        sed_args+=(-e "s|^Volume=/etc/nanoviz/config:|Volume=${CONFIG_DIR}/config:|")
     fi
     if [[ "$IMAGE_TAG" != "latest" ]]; then
-        sed_args+=(-e "s|^\(Image=ghcr.io/weekendsuperhero-io/audioleaf:\)latest|\1${IMAGE_TAG}|")
+        sed_args+=(-e "s|^\(Image=ghcr.io/weekendsuperhero-io/nanoviz:\)latest|\1${IMAGE_TAG}|")
     fi
-    if [[ "$INSTANCE_NAME" != "audioleaf" ]]; then
-        sed_args+=(-e "s|^ContainerName=audioleaf$|ContainerName=${INSTANCE_NAME}|")
+    if [[ "$INSTANCE_NAME" != "nanoviz" ]]; then
+        sed_args+=(-e "s|^ContainerName=nanoviz$|ContainerName=${INSTANCE_NAME}|")
     fi
     if [[ -n "$AIRPLAY_NAME" ]]; then
         # Uncomment the placeholder and set the value. Escape sed metacharacters
         # in the name so spaces / regex chars survive cleanly.
         escaped_airplay_name="$(printf '%s' "$AIRPLAY_NAME" | sed 's/[\\&|]/\\&/g')"
-        sed_args+=(-e "s|^#Environment=AUDIOLEAF_AIRPLAY_NAME=.*|Environment=AUDIOLEAF_AIRPLAY_NAME=${escaped_airplay_name}|")
+        sed_args+=(-e "s|^#Environment=NANOVIZ_AIRPLAY_NAME=.*|Environment=NANOVIZ_AIRPLAY_NAME=${escaped_airplay_name}|")
     fi
     if (( ${#sed_args[@]} )); then
         sed "${sed_args[@]}" "$quadlet_src" > "$quadlet_dest"
@@ -382,7 +382,7 @@ if (( ENABLE_SYSTEMD )); then
         cat >"$polkit_rule_file" <<POLKIT
 // Allow members of the 'audio' group to start/stop/restart/enable/disable
 // ${INSTANCE_NAME}.service without a password prompt or sudo.
-// Installed by audioleaf's pi/setup.sh.
+// Installed by nanoviz's pi/setup.sh.
 polkit.addRule(function(action, subject) {
     if (action.id == "org.freedesktop.systemd1.manage-units" &&
         action.lookup("unit") == "${INSTANCE_NAME}.service" &&
@@ -418,13 +418,13 @@ host_ip="${host_ip:-<pi-ip>}"
 
 cat <<EOF
 
-Audioleaf is set up.
+NanoViz is set up.
 
   Instance:      $INSTANCE_NAME
-  AirPlay name:  ${AIRPLAY_NAME:-<image default ("audioleaf")>}
+  AirPlay name:  ${AIRPLAY_NAME:-<image default ("nanoviz")>}
   Web UI:        http://${host_ip}:8787
   Config dir:    $CONFIG_DIR/config
-  Devices file:  $CONFIG_DIR/config/nl_devices.toml  (host path; container sees /root/.config/audioleaf/nl_devices.toml)
+  Devices file:  $CONFIG_DIR/config/nl_devices.toml  (host path; container sees /root/.config/nanoviz/nl_devices.toml)
   Compose file:  $compose_dest
   Quadlet:       /etc/containers/systemd/${INSTANCE_NAME}.container
 
@@ -436,7 +436,7 @@ Useful commands (no sudo needed once you've logged out and back in):
 
 To enable verbose shairport metadata logging:
   edit /etc/containers/systemd/${INSTANCE_NAME}.container
-  uncomment the AUDIOLEAF_LOG_METADATA line, then
+  uncomment the NANOVIZ_LOG_METADATA line, then
   sudo systemctl daemon-reload && systemctl restart ${INSTANCE_NAME}
   journalctl -fu ${INSTANCE_NAME} | grep META
 

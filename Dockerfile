@@ -1,11 +1,11 @@
 # syntax=docker/dockerfile:1.7
 #
-# Multi-arch container image for audioleaf on Raspberry Pi (and any Linux host
+# Multi-arch container image for nanoviz on Raspberry Pi (and any Linux host
 # with ALSA loopback). Bundles nqptp + shairport-sync (built from source for
-# AirPlay 2 support) + audioleaf API server + prebuilt React frontend.
+# AirPlay 2 support) + nanoviz API server + prebuilt React frontend.
 #
 # Build:
-#   docker buildx build --platform linux/arm64,linux/amd64 -t audioleaf:test .
+#   docker buildx build --platform linux/arm64,linux/amd64 -t nanoviz:test .
 #
 # Run on a Pi (snd-aloop kernel module must be loaded on the host):
 #   podman compose -f containers/compose.yaml up -d
@@ -15,14 +15,14 @@ ARG RUST_VERSION=1
 ARG NODE_VERSION=22
 
 # ---------- Stage 1: Rust binary ----------
-FROM rust:${RUST_VERSION}-${DEBIAN_RELEASE} AS audioleaf-builder
+FROM rust:${RUST_VERSION}-${DEBIAN_RELEASE} AS nanoviz-builder
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libasound2-dev pkg-config \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
-RUN cargo build --release --locked --bin audioleaf
+RUN cargo build --release --locked --bin nanoviz
 
 # ---------- Stage 2: React frontend (pnpm) ----------
 FROM node:${NODE_VERSION}-${DEBIAN_RELEASE}-slim AS web-builder
@@ -73,19 +73,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libsoxr0 libplist3 libsodium23 libgcrypt20 libssl3 \
         libpopt0 libconfig9 libavahi-client3 \
     && rm -rf /var/lib/apt/lists/* \
-    && mkdir -p /var/run/dbus /root/.config/audioleaf /usr/local/share/audioleaf
+    && mkdir -p /var/run/dbus /root/.config/nanoviz /usr/local/share/nanoviz
 
 COPY --from=airplay-builder /out/usr/local/ /usr/local/
-COPY --from=audioleaf-builder /build/target/release/audioleaf /usr/local/bin/audioleaf
-COPY --from=web-builder /build/web/dist/ /usr/local/share/audioleaf/web/
+COPY --from=nanoviz-builder /build/target/release/nanoviz /usr/local/bin/nanoviz
+COPY --from=web-builder /build/web/dist/ /usr/local/share/nanoviz/web/
 
 COPY piWebServer/shairport-sync.conf /etc/shairport-sync.conf
 COPY piWebServer/asound-default-loopback.conf /etc/asound.conf
 COPY containers/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
-ENV AUDIOLEAF_FRONTEND_DIR=/usr/local/share/audioleaf/web \
-    AUDIOLEAF_SHAIRPORT_METADATA_PIPE=/tmp/shairport-sync-metadata
+ENV NANOVIZ_FRONTEND_DIR=/usr/local/share/nanoviz/web \
+    NANOVIZ_SHAIRPORT_METADATA_PIPE=/tmp/shairport-sync-metadata
 
 EXPOSE 8787
 

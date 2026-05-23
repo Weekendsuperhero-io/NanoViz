@@ -376,7 +376,7 @@ impl Config {
 
 /// Resolves absolute paths for configuration and devices TOML files.
 ///
-/// Defaults to XDG config dir (~/.config/audioleaf/) + default filenames if not provided.
+/// Defaults to XDG config dir (~/.config/nanoviz/) + default filenames if not provided.
 /// Checks file existence (returns bool in tuple) and permissions.
 ///
 /// # Arguments

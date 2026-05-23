@@ -56,10 +56,6 @@ pub fn get_track_title() -> Option<String> {
     {
         linux::get_track_title()
     }
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    {
-        None
-    }
 }
 
 /// Fetches artwork bytes once and returns both the raw image and the extracted palette.
@@ -76,10 +72,6 @@ pub fn fetch_artwork_and_palette() -> Option<(Vec<u8>, Vec<[u8; 3]>)> {
         let bytes = linux::fetch_artwork_bytes()?;
         let colors = linux::extract_colors_from_bytes(&bytes)?;
         Some((bytes, colors))
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    {
-        None
     }
 }
 

@@ -16,7 +16,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest]
         rust: [stable]
 
     steps:
@@ -64,8 +64,8 @@ jobs:
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
-      - name: Build
-        if: matrix.os != 'macos-latest'
+      - name: Build (Linux)
+        if: matrix.os == 'ubuntu-latest'
         run: cargo build --release --verbose
 
       - name: Add macOS targets
@@ -78,9 +78,9 @@ jobs:
           cargo build --release --target x86_64-apple-darwin
           cargo build --release --target aarch64-apple-darwin
           lipo -create \
-            target/x86_64-apple-darwin/release/audioleaf \
-            target/aarch64-apple-darwin/release/audioleaf \
-            -output target/release/audioleaf-universal
+            target/x86_64-apple-darwin/release/nanoviz \
+            target/aarch64-apple-darwin/release/nanoviz \
+            -output target/release/nanoviz-universal
 
       - name: Run tests
         run: cargo test --verbose

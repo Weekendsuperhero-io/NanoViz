@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# audioleaf — Raspberry Pi teardown (reverses pi/setup.sh).
+# nanoviz — Raspberry Pi teardown (reverses pi/setup.sh).
 #
 # Usage:
 #   sudo ./pi/uninstall.sh                  # remove service + Quadlet + polkit rule
 #   sudo ./pi/uninstall.sh --name=foo       # uninstall a non-default instance
-#   sudo ./pi/uninstall.sh --remove-image   # also `podman rmi` the audioleaf image
+#   sudo ./pi/uninstall.sh --remove-image   # also `podman rmi` the nanoviz image
 #   sudo ./pi/uninstall.sh --remove-aloop   # also remove snd-aloop module config
 #   sudo ./pi/uninstall.sh --purge          # also delete the config dir (loses
 #                                           # nl_devices.toml pairing tokens)
@@ -20,7 +20,7 @@
 set -euo pipefail
 
 # ---------- defaults ----------
-INSTANCE_NAME="audioleaf"
+INSTANCE_NAME="nanoviz"
 REMOVE_IMAGE=0
 REMOVE_ALOOP=0
 PURGE=0
@@ -159,9 +159,9 @@ fi
 banner 6 "Image and config"
 if (( REMOVE_IMAGE )); then
     if command -v podman >/dev/null 2>&1; then
-        # Match any tag of the audioleaf image; ignore failures (e.g. image absent).
+        # Match any tag of the nanoviz image; ignore failures (e.g. image absent).
         for img in $(podman images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null \
-                       | grep -E 'audioleaf:(latest|dev|[A-Za-z0-9._-]+)$' || true); do
+                       | grep -E 'nanoviz:(latest|dev|[A-Za-z0-9._-]+)$' || true); do
             podman rmi -f "$img" >/dev/null 2>&1 && log "Removed image $img." \
                 || warn "Could not remove $img (in use?)."
         done
