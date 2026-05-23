@@ -1857,6 +1857,10 @@ function DeviceLayoutViewer({
     const sy = height - (ry * scale + offsetY);
     return {
       ...panel,
+      // Match the cluster rotation so polygons align with their (rotated)
+      // centers — otherwise hexagons share centers but not edges, producing
+      // a visible per-panel tilt of (globalOrientation mod 60)°.
+      orientation: panel.orientation - layout.global_orientation,
       sx,
       sy,
       scaledRadius: radius * scale,
