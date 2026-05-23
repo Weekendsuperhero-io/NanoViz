@@ -219,21 +219,14 @@ impl NlDevice {
         let info = self.get_device_info()?;
 
         let is_on = info["state"]["on"]["value"].as_bool().unwrap_or(true);
-        let brightness = info["state"]["brightness"]["value"].as_u64().unwrap_or(100) as u8;
 
-        let needs_power = !is_on;
-        let needs_brightness = brightness != 100;
-
-        if needs_power {
+        // Only flip the device on if needed. Brightness is left alone here —
+        // it's now driven by the AirPlay client's volume slider via the
+        // `pvol` metadata handler, and forcing it to 100 on every session
+        // start would override the user's most recent volume setting.
+        if !is_on {
             eprintln!("Device is off. Turning on...");
-        }
-        if needs_brightness {
-            eprintln!("Device brightness is {}. Setting to 100...", brightness);
-        }
-
-        if needs_power || needs_brightness {
-            self.set_state(if needs_power { Some(true) } else { None }, Some(100))?;
-            // Give the device a moment to respond to the state change
+            self.set_state(Some(true), None)?;
             std::thread::sleep(std::time::Duration::from_millis(500));
         }
 

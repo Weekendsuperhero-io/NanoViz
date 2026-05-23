@@ -993,6 +993,11 @@ function App() {
                 <Badge variant={nowPlaying?.reader_running ? "default" : "secondary"}>
                   {nowPlaying?.reader_running ? "Reader Running" : "Reader Waiting"}
                 </Badge>
+                {health?.airplay_name ? (
+                  <Badge variant="secondary" title="AirPlay receiver name (pick this in the iOS/macOS AirPlay menu)">
+                    AirPlay: {health.airplay_name}
+                  </Badge>
+                ) : null}
                 {isArtworkSource &&
                 nowPlaying?.palette_colors.length ? (
                   <Badge className="bg-primary text-primary-foreground">
@@ -1290,6 +1295,30 @@ function App() {
                         </option>
                       ))}
                     </select>
+                    {(() => {
+                      const selected = paletteEntryFor(
+                        paletteDraft,
+                        palettes?.palettes ?? [],
+                      );
+                      if (!selected?.colors.length) {
+                        return null;
+                      }
+                      return (
+                        <div
+                          className="flex flex-wrap items-center gap-1.5"
+                          aria-label={`Colors for ${selected.name}`}
+                        >
+                          {selected.colors.map(([r, g, b], idx) => (
+                            <span
+                              key={`palette-swatch-${idx}`}
+                              className="h-6 w-8 rounded-sm border border-border/70"
+                              style={{ backgroundColor: `rgb(${r}, ${g}, ${b})` }}
+                              title={`rgb(${r}, ${g}, ${b})`}
+                            />
+                          ))}
+                        </div>
+                      );
+                    })()}
                     <p className="text-xs text-muted-foreground">Applies immediately on change.</p>
                   </div>
                 </div>

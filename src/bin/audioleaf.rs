@@ -181,6 +181,13 @@ struct NowPlayingRuntimeState {
     progress_received_at_ms: Option<u64>,
     /// AirPlay volume in dB (0.0 to -30.0, -144.0 = mute)
     volume_db: Option<f32>,
+    /// Last brightness value we pushed to the device in response to a
+    /// `pvol` event. Used to suppress duplicate writes when the iOS slider
+    /// fires several pvols that map to the same integer brightness. Only
+    /// read on Linux (the metadata pipe is Linux-only); on macOS this is
+    /// initialized to None and never touched.
+    #[allow(dead_code)]
+    last_pvol_brightness: Option<u8>,
 }
 
 impl NowPlayingRuntimeState {
@@ -199,6 +206,7 @@ impl NowPlayingRuntimeState {
             progress_rtp: None,
             progress_received_at_ms: None,
             volume_db: None,
+            last_pvol_brightness: None,
         }
     }
 
@@ -351,6 +359,10 @@ impl IntoResponse for ApiError {
 struct HealthResponse {
     status: &'static str,
     version: &'static str,
+    /// AirPlay receiver name advertised on mDNS. `None` when the
+    /// `AUDIOLEAF_AIRPLAY_NAME` env var is unset and shairport-sync falls
+    /// back to its baked-in conf default ("audioleaf").
+    airplay_name: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -622,6 +634,9 @@ async fn get_health() -> Json<HealthResponse> {
     Json(HealthResponse {
         status: "ok",
         version: env!("CARGO_PKG_VERSION"),
+        airplay_name: std::env::var("AUDIOLEAF_AIRPLAY_NAME")
+            .ok()
+            .filter(|name| !name.trim().is_empty()),
     })
 }
 
@@ -1772,8 +1787,35 @@ fn apply_metadata_item_to_state(
                     log_metadata_event("WARNING: failed to parse prgr payload", Some(&payload));
                 }
             }
-            // Volume: "airplay_vol,actual_vol,lowest,highest" in dB
-            "pvol" => guard.volume_db = parse_pvol(&payload),
+            // Volume: "airplay_vol,actual_vol,lowest,highest" in dB.
+            // We drive Nanoleaf brightness from this so the iOS AirPlay
+            // volume slider becomes the dimmer. shairport-sync.conf has
+            // `ignore_volume_control = "yes"`, so volume changes do NOT
+            // attenuate audio — the slider is brightness-only.
+            "pvol" => {
+                let db = parse_pvol(&payload);
+                guard.volume_db = db;
+                if let Some(db_value) = db
+                    && let Some(brightness) = volume_db_to_brightness(db_value)
+                    && guard.last_pvol_brightness != Some(brightness)
+                {
+                    guard.last_pvol_brightness = Some(brightness);
+                    // active_palette_device locks runtime_config + reads
+                    // the devices file — both quick. The actual HTTP write
+                    // runs on a blocking task so it doesn't stall metadata
+                    // processing.
+                    if let Ok(device) = active_palette_device(state) {
+                        tokio::task::spawn_blocking(move || {
+                            if let Err(err) = device.set_state(None, Some(brightness)) {
+                                eprintln!(
+                                    "WARNING: pvol → brightness write failed (brightness={}): {}",
+                                    brightness, err
+                                );
+                            }
+                        });
+                    }
+                }
+            }
             // Metadata bundle boundaries (informational — no action needed)
             "mdst" | "mden" | "pcst" | "pcen" => {}
             _ => {}
@@ -1831,6 +1873,28 @@ fn parse_pvol(payload: &[u8]) -> Option<f32> {
     let text = std::str::from_utf8(payload).ok()?;
     let first = text.split(',').next()?.trim();
     first.parse().ok()
+}
+
+/// Map AirPlay volume (dB) to a Nanoleaf brightness value (1..=100).
+///
+/// AirPlay reports volume on a 0.0 (loudest) to -30.0 (quietest) dB scale,
+/// with -144.0 as a "muted" sentinel. We treat mute as "leave brightness
+/// alone" (returning None) so a stray mute press doesn't kill the panels;
+/// otherwise linearly map [-30, 0] dB → [1, 100] brightness. Clamping
+/// keeps us inside the Nanoleaf API's accepted 0..=100 range while
+/// avoiding 0 (which would turn the device off rather than dim it).
+///
+/// Linux-only because the `pvol` consumer lives in the metadata pipe
+/// handler which is Linux-gated.
+#[cfg(target_os = "linux")]
+fn volume_db_to_brightness(db: f32) -> Option<u8> {
+    if !db.is_finite() || db <= -144.0 {
+        return None;
+    }
+    let clamped = db.clamp(-30.0, 0.0);
+    let frac = 1.0 - (clamped / -30.0);
+    let raw = (frac * 100.0).round();
+    Some(raw.clamp(1.0, 100.0) as u8)
 }
 
 #[cfg(target_os = "linux")]
