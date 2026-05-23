@@ -6,11 +6,15 @@
 #   curl -fsSL https://raw.githubusercontent.com/Weekendsuperhero-io/audioleaf/main/pi/setup.sh | sudo bash
 #
 # Flags:
-#   --no-systemd          skip writing/enabling audioleaf.service
+#   --name=NAME           instance name (default "audioleaf"). Controls the
+#                         systemd unit (NAME.service), container name, Quadlet
+#                         filename (NAME.container), polkit rule, and the
+#                         default config dir (~/.config/NAME). Use a distinct
+#                         name to run multiple independent instances on one host.
+#   --no-systemd          skip writing/enabling the systemd service
 #   --no-deploy           host prep only (don't pull/start the container)
 #   --force-compose       overwrite the staged compose.yaml if it exists
-#   --config-dir=DIR      override the default config dir (~/.config/audioleaf
-#                         for sudo'd users, /etc/audioleaf for raw-root installs)
+#   --config-dir=DIR      override the default config dir
 #   --image-tag=TAG       container image tag (default: "dev" on non-main git
 #                         branches, "latest" otherwise)
 
@@ -22,6 +26,7 @@ DEPLOY=1
 FORCE_COMPOSE=0
 CONFIG_DIR=""           # resolved after preflight; "" means "pick default"
 IMAGE_TAG=""
+INSTANCE_NAME="audioleaf"
 COMPOSE_URL="https://raw.githubusercontent.com/Weekendsuperhero-io/audioleaf/main/containers/compose.yaml"
 QUADLET_URL="https://raw.githubusercontent.com/Weekendsuperhero-io/audioleaf/main/containers/audioleaf.container"
 
@@ -39,8 +44,15 @@ for arg in "$@"; do
         --force-compose)      FORCE_COMPOSE=1 ;;
         --config-dir=*)       CONFIG_DIR="${arg#*=}" ;;
         --image-tag=*)        IMAGE_TAG="${arg#*=}" ;;
+        --name=*)
+            INSTANCE_NAME="${arg#*=}"
+            if [[ ! "$INSTANCE_NAME" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+                echo "ERROR: --name must match [a-zA-Z0-9_-]+ (got: $INSTANCE_NAME)" >&2
+                exit 2
+            fi
+            ;;
         -h|--help)
-            sed -n '2,12p' "$0" | sed 's/^# \?//'
+            sed -n '2,18p' "$0" | sed 's/^# \?//'
             exit 0
             ;;
         *)
@@ -100,20 +112,23 @@ else
 fi
 
 # Resolve CONFIG_DIR default: invoking user's XDG config when possible,
-# system-wide /etc otherwise. Explicit --config-dir= always wins.
+# system-wide /etc otherwise. Explicit --config-dir= always wins. The
+# instance name is part of the path so multiple --name= installs don't share
+# config and device files.
 if [[ -z "$CONFIG_DIR" ]]; then
     if [[ -n "$TARGET_HOME" ]]; then
-        CONFIG_DIR="$TARGET_HOME/.config/audioleaf"
+        CONFIG_DIR="$TARGET_HOME/.config/$INSTANCE_NAME"
     else
-        CONFIG_DIR="/etc/audioleaf"
+        CONFIG_DIR="/etc/$INSTANCE_NAME"
     fi
 fi
-log "Config dir: $CONFIG_DIR"
+log "Instance name: $INSTANCE_NAME"
+log "Config dir:    $CONFIG_DIR"
 
 # Warn (but don't migrate) if an old /etc install would be left orphaned.
-if [[ "$CONFIG_DIR" != "/etc/audioleaf" && -f /etc/audioleaf/config/config.toml ]]; then
-    warn "/etc/audioleaf/config/config.toml exists. New default is $CONFIG_DIR;"
-    warn "re-run with --config-dir=/etc/audioleaf to keep using the old layout."
+if [[ "$CONFIG_DIR" != "/etc/$INSTANCE_NAME" && -f "/etc/$INSTANCE_NAME/config/config.toml" ]]; then
+    warn "/etc/$INSTANCE_NAME/config/config.toml exists. New default is $CONFIG_DIR;"
+    warn "re-run with --config-dir=/etc/$INSTANCE_NAME to keep using the old layout."
 fi
 
 IMAGE_TAG="$(detect_image_tag)"
@@ -277,7 +292,7 @@ if (( DEPLOY )) && (( ENABLE_SYSTEMD )); then
     fi
 
     quadlet_dir="/etc/containers/systemd"
-    quadlet_dest="$quadlet_dir/audioleaf.container"
+    quadlet_dest="$quadlet_dir/${INSTANCE_NAME}.container"
     mkdir -p "$quadlet_dir"
 
     if [[ -n "$local_quadlet" ]]; then
@@ -292,8 +307,10 @@ if (( DEPLOY )) && (( ENABLE_SYSTEMD )); then
         log "Fetched Quadlet from $QUADLET_URL."
     fi
 
-    # Substitute the volume mount to honor --config-dir (template default is
-    # /etc/audioleaf/config) and the image tag (template default is :latest).
+    # Substitute the volume mount (template default: /etc/audioleaf/config),
+    # the image tag (template default: :latest), and the container name
+    # (template default: ContainerName=audioleaf) so multiple --name=
+    # instances don't collide on the host.
     sed_args=()
     if [[ "$CONFIG_DIR" != "/etc/audioleaf" ]]; then
         sed_args+=(-e "s|^Volume=/etc/audioleaf/config:|Volume=${CONFIG_DIR}/config:|")
@@ -301,9 +318,12 @@ if (( DEPLOY )) && (( ENABLE_SYSTEMD )); then
     if [[ "$IMAGE_TAG" != "latest" ]]; then
         sed_args+=(-e "s|^\(Image=ghcr.io/weekendsuperhero-io/audioleaf:\)latest|\1${IMAGE_TAG}|")
     fi
+    if [[ "$INSTANCE_NAME" != "audioleaf" ]]; then
+        sed_args+=(-e "s|^ContainerName=audioleaf$|ContainerName=${INSTANCE_NAME}|")
+    fi
     if (( ${#sed_args[@]} )); then
         sed "${sed_args[@]}" "$quadlet_src" > "$quadlet_dest"
-        log "Rewrote Quadlet (config-dir=$CONFIG_DIR, image tag=$IMAGE_TAG)."
+        log "Rewrote Quadlet (name=$INSTANCE_NAME, config-dir=$CONFIG_DIR, image tag=$IMAGE_TAG)."
     else
         cp "$quadlet_src" "$quadlet_dest"
     fi
@@ -319,12 +339,13 @@ if (( DEPLOY )) && (( ENABLE_SYSTEMD )); then
     # "Unit ... is transient or generated.").
     systemctl daemon-reload
 
-    if systemctl is-active --quiet audioleaf.service; then
-        systemctl restart audioleaf.service
-        log "audioleaf.service restarted via Quadlet."
+    service_unit="${INSTANCE_NAME}.service"
+    if systemctl is-active --quiet "$service_unit"; then
+        systemctl restart "$service_unit"
+        log "$service_unit restarted via Quadlet."
     else
-        systemctl start audioleaf.service
-        log "audioleaf.service started via Quadlet (auto-wired to default.target by the generator)."
+        systemctl start "$service_unit"
+        log "$service_unit started via Quadlet (auto-wired to default.target by the generator)."
     fi
 else
     log "Skipped ($([[ $DEPLOY -eq 0 ]] && echo --no-deploy || echo --no-systemd))."
@@ -334,21 +355,22 @@ fi
 banner 7 "polkit rule for no-sudo service control"
 if (( ENABLE_SYSTEMD )); then
     polkit_rules_dir="/etc/polkit-1/rules.d"
+    polkit_rule_file="$polkit_rules_dir/50-${INSTANCE_NAME}.rules"
     if [[ -d "$polkit_rules_dir" ]]; then
-        cat >"$polkit_rules_dir/50-audioleaf.rules" <<'POLKIT'
+        cat >"$polkit_rule_file" <<POLKIT
 // Allow members of the 'audio' group to start/stop/restart/enable/disable
-// audioleaf.service without a password prompt or sudo.
+// ${INSTANCE_NAME}.service without a password prompt or sudo.
 // Installed by audioleaf's pi/setup.sh.
 polkit.addRule(function(action, subject) {
     if (action.id == "org.freedesktop.systemd1.manage-units" &&
-        action.lookup("unit") == "audioleaf.service" &&
+        action.lookup("unit") == "${INSTANCE_NAME}.service" &&
         subject.isInGroup("audio")) {
         return polkit.Result.YES;
     }
 });
 POLKIT
-        chmod 0644 "$polkit_rules_dir/50-audioleaf.rules"
-        log "Installed $polkit_rules_dir/50-audioleaf.rules (audio-group → manage audioleaf.service)."
+        chmod 0644 "$polkit_rule_file"
+        log "Installed $polkit_rule_file (audio-group → manage ${INSTANCE_NAME}.service)."
     else
         warn "$polkit_rules_dir not present; skipping. Install 'polkitd' for no-sudo systemctl."
     fi
@@ -364,7 +386,7 @@ if (( DEPLOY )) && (( ! ENABLE_SYSTEMD )); then
 elif (( ! DEPLOY )); then
     log "Skipped (--no-deploy)."
 else
-    log "Started by Quadlet-generated audioleaf.service."
+    log "Started by Quadlet-generated ${INSTANCE_NAME}.service."
 fi
 
 # ---------- 9. final report ----------
@@ -376,21 +398,24 @@ cat <<EOF
 
 Audioleaf is set up.
 
+  Instance:      $INSTANCE_NAME
   Web UI:        http://${host_ip}:8787
   Config dir:    $CONFIG_DIR/config
+  Devices file:  $CONFIG_DIR/config/nl_devices.toml  (host path; container sees /root/.config/audioleaf/nl_devices.toml)
   Compose file:  $compose_dest
+  Quadlet:       /etc/containers/systemd/${INSTANCE_NAME}.container
 
 Useful commands (no sudo needed once you've logged out and back in):
-  journalctl -fu audioleaf                   # live logs
-  systemctl status audioleaf                 # service state
-  systemctl restart audioleaf                # restart
+  journalctl -fu ${INSTANCE_NAME}                   # live logs
+  systemctl status ${INSTANCE_NAME}                 # service state
+  systemctl restart ${INSTANCE_NAME}                # restart
   sudo podman compose -f $CONFIG_DIR/compose.yaml pull   # update image (still needs sudo for podman)
 
 To enable verbose shairport metadata logging:
-  edit $CONFIG_DIR/audioleaf.container (or /etc/containers/systemd/audioleaf.container)
+  edit /etc/containers/systemd/${INSTANCE_NAME}.container
   uncomment the AUDIOLEAF_LOG_METADATA line, then
-  sudo systemctl daemon-reload && systemctl restart audioleaf
-  journalctl -fu audioleaf | grep META
+  sudo systemctl daemon-reload && systemctl restart ${INSTANCE_NAME}
+  journalctl -fu ${INSTANCE_NAME} | grep META
 
 If you were just added to new groups, log out and log back in for them to apply.
 EOF

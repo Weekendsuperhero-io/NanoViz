@@ -1427,7 +1427,25 @@ async fn run_live_visualizer_watchdog_tick(state: &ApiState) -> Result<(), ApiEr
         return Ok(());
     }
 
+    // Quiet idle: a fresh install with no paired devices has nothing to drive.
+    // Don't log a recovery warning every tick — wait until the user pairs a
+    // device via /api/devices/pair (which will then succeed).
+    if !has_paired_devices(state)? {
+        return Ok(());
+    }
+
     recover_live_visualizer(state, "watchdog health check").await
+}
+
+fn has_paired_devices(state: &ApiState) -> Result<bool, ApiError> {
+    let paths = resolve_paths(state)?;
+    if !paths.devices_file_exists {
+        return Ok(false);
+    }
+    let devices_path = PathBuf::from(&paths.devices_file_path);
+    let devices =
+        audioleaf::nanoleaf::NlDevice::all_from_file(&devices_path).map_err(ApiError::internal)?;
+    Ok(!devices.is_empty())
 }
 
 #[cfg(target_os = "linux")]

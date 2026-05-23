@@ -143,6 +143,25 @@ Diff `failure-diag.txt` against `healthy-baseline.txt`:
   lsmod | grep snd_aloop
   ```
 
+## Avahi "name collision, renaming to NAME #N" loop
+
+If the journal shows shairport-sync rapidly incrementing its mDNS service
+name (`Nano Viz #2`, `#3`, `#4`, ...), the host avahi-daemon has a stale
+registration cached from a previous container run that didn't deregister.
+Fix in one shot:
+
+```sh
+sudo systemctl restart avahi-daemon
+sudo systemctl restart audioleaf
+```
+
+The container's entrypoint now traps SIGTERM and forwards it to
+shairport-sync before exiting, so this should stop recurring after a clean
+restart. If you still see the loop, check that `/var/run/avahi-daemon` is
+bind-mounted (`Volume=/var/run/avahi-daemon:/var/run/avahi-daemon` in the
+Quadlet) — without that, shairport-sync starts its *own* avahi client and
+collides with the host's daemon every time.
+
 ## Reverting Phase 1
 
 Once root cause is captured:
