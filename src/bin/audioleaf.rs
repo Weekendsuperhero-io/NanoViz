@@ -439,6 +439,21 @@ struct VisualizerSettingsUpdateRequest {
     time_window: Option<f32>,
 }
 
+#[derive(Debug, Serialize)]
+struct DiscoverResponse {
+    devices: Vec<DeviceSummary>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PairRequest {
+    ip: String,
+}
+
+#[derive(Debug, Serialize)]
+struct PairResponse {
+    device: DeviceSummary,
+}
+
 #[derive(Debug, Deserialize)]
 struct DeviceStateUpdateRequest {
     power_on: Option<bool>,
@@ -564,6 +579,8 @@ async fn main() -> Result<()> {
         .route("/api/visualizer/status", get(get_visualizer_status))
         .route("/api/audio/backends", get(get_audio_backends))
         .route("/api/devices", get(get_devices))
+        .route("/api/devices/discover", post(post_devices_discover))
+        .route("/api/devices/pair", post(post_devices_pair))
         .route("/api/devices/{name}/info", get(get_device_info))
         .route("/api/devices/{name}/layout", get(get_device_layout))
         .route("/api/devices/{name}/state", put(put_device_state))
@@ -946,6 +963,70 @@ async fn get_devices(State(state): State<ApiState>) -> ApiResult<DevicesResponse
         devices_file_path: paths.devices_file_path,
         devices_file_exists: paths.devices_file_exists,
     }))
+}
+
+async fn post_devices_discover(State(_state): State<ApiState>) -> ApiResult<DiscoverResponse> {
+    // ssdp_msearch is blocking UDP with a 10s timeout — keep it off the
+    // async runtime.
+    let (names, ips) = tokio::task::spawn_blocking(audioleaf::ssdp::ssdp_msearch)
+        .await
+        .map_err(handle_join_error)?
+        .map_err(ApiError::internal)?;
+
+    let devices = names
+        .into_iter()
+        .zip(ips)
+        .map(|(name, ip)| DeviceSummary {
+            name,
+            ip: ip.to_string(),
+        })
+        .collect();
+
+    Ok(Json(DiscoverResponse { devices }))
+}
+
+async fn post_devices_pair(
+    State(state): State<ApiState>,
+    Json(payload): Json<PairRequest>,
+) -> ApiResult<PairResponse> {
+    let ip: std::net::Ipv4Addr = payload
+        .ip
+        .parse()
+        .map_err(|_| ApiError::bad_request(format!("Invalid IPv4 address: {}", payload.ip)))?;
+
+    let paths = resolve_paths(&state)?;
+    let devices_path = PathBuf::from(&paths.devices_file_path);
+
+    let device = tokio::task::spawn_blocking(move || audioleaf::nanoleaf::NlDevice::new(ip))
+        .await
+        .map_err(handle_join_error)?
+        .map_err(|err| {
+            // If the underlying reqwest error is HTTP 403, the device wasn't
+            // in pairing mode. Surface 409 + a stable error code so the UI
+            // can show the "hold the power button" hint.
+            for cause in err.chain() {
+                if let Some(req_err) = cause.downcast_ref::<reqwest::Error>()
+                    && req_err.status() == Some(reqwest::StatusCode::FORBIDDEN)
+                {
+                    return ApiError {
+                        status: StatusCode::CONFLICT,
+                        message: "device_not_in_pairing_mode".to_string(),
+                    };
+                }
+            }
+            ApiError::bad_request(err.to_string())
+        })?;
+
+    let summary = DeviceSummary {
+        name: device.name.clone(),
+        ip: device.ip.to_string(),
+    };
+
+    device
+        .append_to_file(&devices_path)
+        .map_err(ApiError::internal)?;
+
+    Ok(Json(PairResponse { device: summary }))
 }
 
 async fn get_device_info(

@@ -98,6 +98,21 @@ export type DevicesResponse = {
   devices_file_exists: boolean;
 };
 
+export type DiscoverResponse = {
+  devices: DeviceSummary[];
+};
+
+export type PairResponse = {
+  device: DeviceSummary;
+};
+
+export class PairNotInPairingModeError extends Error {
+  constructor() {
+    super("device_not_in_pairing_mode");
+    this.name = "PairNotInPairingModeError";
+  }
+}
+
 export type DeviceInfoResponse = {
   device: DeviceSummary;
   info: Record<string, unknown>;
@@ -273,6 +288,21 @@ export const api = {
     apiGet<VisualizerStatusResponse>("/api/visualizer/status"),
   audioBackends: () => apiGet<AudioBackendsResponse>("/api/audio/backends"),
   devices: () => apiGet<DevicesResponse>("/api/devices"),
+  discoverDevices: () =>
+    apiSend<DiscoverResponse>("/api/devices/discover", {
+      method: "POST",
+    }),
+  pairDevice: async (ip: string): Promise<PairResponse> => {
+    const response = await fetch(apiPath("/api/devices/pair"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ip }),
+    });
+    if (response.status === 409) {
+      throw new PairNotInPairingModeError();
+    }
+    return parseResponse<PairResponse>(response);
+  },
   deviceInfo: (name: string) =>
     apiGet<DeviceInfoResponse>(`/api/devices/${encodeURIComponent(name)}/info`),
   deviceLayout: (name: string) =>

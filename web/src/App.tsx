@@ -10,6 +10,8 @@ import {
   type DeviceLayoutResponse,
   type DevicesResponse,
   type DeviceStateUpdateRequest,
+  type DeviceSummary,
+  PairNotInPairingModeError,
   type NowPlayingResponse,
   type VisualizerSettingsUpdateRequest,
   type VisualizerStatusResponse,
@@ -212,6 +214,14 @@ function App() {
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [config, setConfig] = useState<ConfigResponse | null>(null);
   const [devices, setDevices] = useState<DevicesResponse | null>(null);
+  const [showPairPanel, setShowPairPanel] = useState(false);
+  const [pairManualMode, setPairManualMode] = useState(false);
+  const [pairManualIp, setPairManualIp] = useState("");
+  const [discoveredDevices, setDiscoveredDevices] = useState<DeviceSummary[] | null>(null);
+  const [discoverState, setDiscoverState] = useState<"idle" | "scanning" | "error">("idle");
+  const [pairSelectedIp, setPairSelectedIp] = useState<string | null>(null);
+  const [pairState, setPairState] = useState<"idle" | "pairing">("idle");
+  const [pairMessage, setPairMessage] = useState<string | null>(null);
   const [palettes, setPalettes] = useState<PalettesResponse | null>(null);
   const [selectedDeviceInfo, setSelectedDeviceInfo] =
     useState<DeviceInfoResponse | null>(null);
@@ -509,6 +519,64 @@ function App() {
       );
     } finally {
       setUpdatingDeviceName(null);
+    }
+  }
+
+  function resetPairPanel() {
+    setShowPairPanel(false);
+    setPairManualMode(false);
+    setPairManualIp("");
+    setDiscoveredDevices(null);
+    setDiscoverState("idle");
+    setPairSelectedIp(null);
+    setPairState("idle");
+    setPairMessage(null);
+  }
+
+  async function handleDiscoverDevices() {
+    try {
+      setPairMessage(null);
+      setDiscoverState("scanning");
+      const response = await api.discoverDevices();
+      setDiscoveredDevices(response.devices);
+      setDiscoverState("idle");
+      if (response.devices.length === 0) {
+        setPairMessage("No devices found on the local network.");
+      }
+    } catch (error) {
+      setDiscoverState("error");
+      setPairMessage(
+        error instanceof Error ? error.message : "Failed to scan for devices",
+      );
+    }
+  }
+
+  async function handlePairDevice() {
+    const ip = pairManualMode ? pairManualIp.trim() : pairSelectedIp;
+    if (!ip) {
+      setPairMessage("Pick a discovered device or enter an IP.");
+      return;
+    }
+    try {
+      setPairMessage(null);
+      setPairState("pairing");
+      const result = await api.pairDevice(ip);
+      // Refresh the devices list so the new device appears in the card.
+      const refreshed = await api.devices();
+      setDevices(refreshed);
+      setActionMessage(`Paired ${result.device.name} (${result.device.ip}).`);
+      resetPairPanel();
+    } catch (error) {
+      setPairState("idle");
+      if (error instanceof PairNotInPairingModeError) {
+        setPairMessage(
+          "Device wasn't in pairing mode. Hold its power button until the lights flash, then try again.",
+        );
+      } else {
+        setPairMessage(
+          error instanceof Error ? error.message : "Pairing failed.",
+        );
+      }
     }
   }
 
@@ -1413,6 +1481,105 @@ function App() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs text-muted-foreground">
+                Pair new devices via SSDP discovery or by IP.
+              </p>
+              <Button
+                size="sm"
+                variant={showPairPanel ? "ghost" : "default"}
+                onClick={() => (showPairPanel ? resetPairPanel() : setShowPairPanel(true))}
+              >
+                {showPairPanel ? "Cancel" : "Pair new device"}
+              </Button>
+            </div>
+
+            {showPairPanel && (
+              <div className="space-y-3 rounded-md border border-border/70 bg-background/70 p-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => {
+                      setPairManualMode(false);
+                      setPairSelectedIp(null);
+                      void handleDiscoverDevices();
+                    }}
+                    disabled={discoverState === "scanning" || pairState === "pairing"}
+                  >
+                    {discoverState === "scanning" ? "Scanning..." : "Scan network"}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      setPairManualMode((prev) => !prev);
+                      setPairSelectedIp(null);
+                      setPairMessage(null);
+                    }}
+                    disabled={pairState === "pairing"}
+                  >
+                    {pairManualMode ? "Back to discovery" : "Manual IP"}
+                  </Button>
+                </div>
+
+                {pairManualMode ? (
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    value={pairManualIp}
+                    onChange={(event) => setPairManualIp(event.currentTarget.value)}
+                    placeholder="192.168.1.42"
+                    disabled={pairState === "pairing"}
+                    className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                    aria-label="Device IP address"
+                  />
+                ) : discoveredDevices && discoveredDevices.length > 0 ? (
+                  <ul className="space-y-1">
+                    {discoveredDevices.map((d) => (
+                      <li key={d.ip}>
+                        <button
+                          type="button"
+                          onClick={() => setPairSelectedIp(d.ip)}
+                          disabled={pairState === "pairing"}
+                          className={cn(
+                            "w-full rounded-md border px-3 py-2 text-left text-sm",
+                            pairSelectedIp === d.ip
+                              ? "border-primary bg-primary/10"
+                              : "border-border/60 bg-card hover:bg-accent",
+                          )}
+                        >
+                          <span className="font-medium">{d.name}</span>
+                          <span className="ml-2 text-muted-foreground">{d.ip}</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+
+                <p className="text-xs text-muted-foreground">
+                  Hold the Nanoleaf power button until the control lights start
+                  flashing, then press Pair.
+                </p>
+
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    onClick={() => void handlePairDevice()}
+                    disabled={
+                      pairState === "pairing" ||
+                      (pairManualMode ? pairManualIp.trim() === "" : pairSelectedIp === null)
+                    }
+                  >
+                    {pairState === "pairing" ? "Pairing..." : "Pair"}
+                  </Button>
+                  {pairMessage && (
+                    <p className="text-xs text-muted-foreground">{pairMessage}</p>
+                  )}
+                </div>
+              </div>
+            )}
+
             {devices?.devices.length ? (
               devices.devices.map((device) => {
                 const isUpdating = updatingDeviceName === device.name;
@@ -1502,7 +1669,7 @@ function App() {
               <p className="text-sm text-muted-foreground">
                 {loadState === "loading"
                   ? "Loading devices..."
-                  : "No known devices found yet. Pair one in the CLI first."}
+                  : "No known devices yet. Use \"Pair new device\" above."}
               </p>
             )}
           </CardContent>

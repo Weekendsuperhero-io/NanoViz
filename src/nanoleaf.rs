@@ -96,12 +96,15 @@ impl NlDevice {
     }
 
     fn get_token(ip: &Ipv4Addr) -> Result<String> {
-        let Ok(res) = utils::request_post(
+        // Propagate the underlying error (reqwest::Error carrying the HTTP
+        // status, or a transport error) so callers like the /api/devices/pair
+        // handler can distinguish HTTP 403 ("device not in pairing mode") from
+        // a real connection failure. The CLI flow surfaces both as a generic
+        // connection error via its own context message.
+        let res = utils::request_post(
             &format!("http://{}:{}/api/v1/new", ip, constants::NL_API_PORT),
             None,
-        ) else {
-            bail!(utils::generate_connection_error_msg(ip));
-        };
+        )?;
         let res_json: serde_json::Value = serde_json::from_str(&res)?;
 
         Ok(res_json["auth_token"].as_str().unwrap().trim().to_string())

@@ -8,8 +8,11 @@
 # Flags:
 #   --no-systemd          skip writing/enabling audioleaf.service
 #   --no-deploy           host prep only (don't pull/start the container)
-#   --force-compose       overwrite /etc/audioleaf/compose.yaml if it exists
-#   --config-dir=DIR      override /etc/audioleaf
+#   --force-compose       overwrite the staged compose.yaml if it exists
+#   --config-dir=DIR      override the default config dir (~/.config/audioleaf
+#                         for sudo'd users, /etc/audioleaf for raw-root installs)
+#   --image-tag=TAG       container image tag (default: "dev" on non-main git
+#                         branches, "latest" otherwise)
 
 set -euo pipefail
 
@@ -17,7 +20,8 @@ set -euo pipefail
 ENABLE_SYSTEMD=1
 DEPLOY=1
 FORCE_COMPOSE=0
-CONFIG_DIR="/etc/audioleaf"
+CONFIG_DIR=""           # resolved after preflight; "" means "pick default"
+IMAGE_TAG=""
 COMPOSE_URL="https://raw.githubusercontent.com/Weekendsuperhero-io/audioleaf/main/containers/compose.yaml"
 QUADLET_URL="https://raw.githubusercontent.com/Weekendsuperhero-io/audioleaf/main/containers/audioleaf.container"
 
@@ -34,6 +38,7 @@ for arg in "$@"; do
         --no-deploy)          DEPLOY=0 ;;
         --force-compose)      FORCE_COMPOSE=1 ;;
         --config-dir=*)       CONFIG_DIR="${arg#*=}" ;;
+        --image-tag=*)        IMAGE_TAG="${arg#*=}" ;;
         -h|--help)
             sed -n '2,12p' "$0" | sed 's/^# \?//'
             exit 0
@@ -51,6 +56,22 @@ log()    { printf '  %s\n' "$*"; }
 warn()   { printf '  WARN: %s\n' "$*" >&2; }
 die()    { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
+# Pick the container image tag. Explicit --image-tag wins. Otherwise, if the
+# script is running from a git checkout, default to "dev" on non-main branches
+# so feature-branch installs pull the CI :dev tag instead of :latest (= main).
+detect_image_tag() {
+    [[ -n "$IMAGE_TAG" ]] && { echo "$IMAGE_TAG"; return; }
+    if [[ -n "$SCRIPT_DIR" ]] && git -C "$SCRIPT_DIR" rev-parse --git-dir >/dev/null 2>&1; then
+        local branch
+        branch="$(git -C "$SCRIPT_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo)"
+        if [[ -n "$branch" && "$branch" != "main" && "$branch" != "HEAD" ]]; then
+            echo "dev"
+            return
+        fi
+    fi
+    echo "latest"
+}
+
 # ---------- preflight ----------
 [[ "$(uname -s)" == "Linux" ]] || die "This script targets Linux (Raspberry Pi OS / Debian)."
 command -v apt-get >/dev/null   || die "apt-get not found. This script targets Debian-based hosts."
@@ -64,10 +85,39 @@ if [[ $EUID -ne 0 ]]; then
     die "Must run as root (or via sudo)."
 fi
 
+TARGET_HOME=""
 if [[ -z "$TARGET_USER" || "$TARGET_USER" == "root" ]]; then
     warn "No non-root \$SUDO_USER detected; group memberships will be skipped."
     TARGET_USER=""
+else
+    # We were re-exec'd under sudo, so $HOME is root's. Look up the real user's
+    # home directly so config defaults land in their home, not /root.
+    TARGET_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
+    if [[ -z "$TARGET_HOME" || ! -d "$TARGET_HOME" ]]; then
+        warn "Could not resolve home directory for $TARGET_USER; falling back to /etc."
+        TARGET_HOME=""
+    fi
 fi
+
+# Resolve CONFIG_DIR default: invoking user's XDG config when possible,
+# system-wide /etc otherwise. Explicit --config-dir= always wins.
+if [[ -z "$CONFIG_DIR" ]]; then
+    if [[ -n "$TARGET_HOME" ]]; then
+        CONFIG_DIR="$TARGET_HOME/.config/audioleaf"
+    else
+        CONFIG_DIR="/etc/audioleaf"
+    fi
+fi
+log "Config dir: $CONFIG_DIR"
+
+# Warn (but don't migrate) if an old /etc install would be left orphaned.
+if [[ "$CONFIG_DIR" != "/etc/audioleaf" && -f /etc/audioleaf/config/config.toml ]]; then
+    warn "/etc/audioleaf/config/config.toml exists. New default is $CONFIG_DIR;"
+    warn "re-run with --config-dir=/etc/audioleaf to keep using the old layout."
+fi
+
+IMAGE_TAG="$(detect_image_tag)"
+log "Using container image tag: $IMAGE_TAG"
 
 # ---------- 1. install OS packages ----------
 banner 1 "Install OS packages"
@@ -163,6 +213,13 @@ banner 4 "Stage compose file + config dir"
 mkdir -p "$CONFIG_DIR/config"
 chmod 0755 "$CONFIG_DIR" "$CONFIG_DIR/config"
 
+# When the config lives under the invoking user's home, hand ownership back
+# to them so they can edit config.toml without sudo.
+if [[ -n "$TARGET_HOME" && "$CONFIG_DIR" == "$TARGET_HOME"/* ]]; then
+    chown -R "$TARGET_USER:" "$CONFIG_DIR"
+    log "Chowned $CONFIG_DIR to $TARGET_USER."
+fi
+
 compose_dest="$CONFIG_DIR/compose.yaml"
 local_compose=""
 if [[ -n "$SCRIPT_DIR" && -f "$SCRIPT_DIR/../containers/compose.yaml" ]]; then
@@ -180,6 +237,13 @@ else
     else
         die "Failed to fetch $COMPOSE_URL"
     fi
+fi
+
+# Rewrite the image: tag in the staged compose. The in-repo file always pins
+# :latest; the installer swaps it for whatever detect_image_tag picked.
+if [[ -f "$compose_dest" && "$IMAGE_TAG" != "latest" ]]; then
+    sed -i "s|\(image: ghcr.io/weekendsuperhero-io/audioleaf:\)latest|\1${IMAGE_TAG}|" \
+        "$compose_dest"
 fi
 
 # ---------- 5. pull image ----------
@@ -228,12 +292,18 @@ if (( DEPLOY )) && (( ENABLE_SYSTEMD )); then
         log "Fetched Quadlet from $QUADLET_URL."
     fi
 
-    # Substitute the volume mount to honor --config-dir. The default in the
-    # template is /etc/audioleaf/config — only rewrite when CONFIG_DIR differs.
+    # Substitute the volume mount to honor --config-dir (template default is
+    # /etc/audioleaf/config) and the image tag (template default is :latest).
+    sed_args=()
     if [[ "$CONFIG_DIR" != "/etc/audioleaf" ]]; then
-        sed "s|^Volume=/etc/audioleaf/config:|Volume=${CONFIG_DIR}/config:|" \
-            "$quadlet_src" > "$quadlet_dest"
-        log "Rewrote Volume= line for --config-dir=$CONFIG_DIR."
+        sed_args+=(-e "s|^Volume=/etc/audioleaf/config:|Volume=${CONFIG_DIR}/config:|")
+    fi
+    if [[ "$IMAGE_TAG" != "latest" ]]; then
+        sed_args+=(-e "s|^\(Image=ghcr.io/weekendsuperhero-io/audioleaf:\)latest|\1${IMAGE_TAG}|")
+    fi
+    if (( ${#sed_args[@]} )); then
+        sed "${sed_args[@]}" "$quadlet_src" > "$quadlet_dest"
+        log "Rewrote Quadlet (config-dir=$CONFIG_DIR, image tag=$IMAGE_TAG)."
     else
         cp "$quadlet_src" "$quadlet_dest"
     fi
@@ -243,14 +313,19 @@ if (( DEPLOY )) && (( ENABLE_SYSTEMD )); then
     [[ -z "$local_quadlet" ]] && rm -f "$quadlet_src"
 
     # The Quadlet generator runs at daemon-reload and turns .container files
-    # into hidden .service units in /run/systemd/generator/.
+    # into transient .service units in /run/systemd/generator/. The generator
+    # honors [Install] WantedBy= itself by writing the wants symlinks, so we
+    # must NOT call `systemctl enable` (which fails on generated units with
+    # "Unit ... is transient or generated.").
     systemctl daemon-reload
 
-    # Even with [Install] WantedBy= in the .container, you must explicitly
-    # enable the generated .service to wire it to the boot target.
-    systemctl enable audioleaf.service
-    systemctl restart audioleaf.service
-    log "audioleaf.service enabled and started via Quadlet."
+    if systemctl is-active --quiet audioleaf.service; then
+        systemctl restart audioleaf.service
+        log "audioleaf.service restarted via Quadlet."
+    else
+        systemctl start audioleaf.service
+        log "audioleaf.service started via Quadlet (auto-wired to default.target by the generator)."
+    fi
 else
     log "Skipped ($([[ $DEPLOY -eq 0 ]] && echo --no-deploy || echo --no-systemd))."
 fi

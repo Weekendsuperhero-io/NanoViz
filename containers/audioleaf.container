@@ -2,7 +2,9 @@
 #
 # Drop this at /etc/containers/systemd/audioleaf.container, then:
 #   sudo systemctl daemon-reload
-#   sudo systemctl enable --now audioleaf.service
+#   sudo systemctl start audioleaf.service
+# (Do not `systemctl enable` — Quadlet generates a transient unit in
+# /run/systemd/generator/ and wires [Install] WantedBy= itself.)
 #
 # pi/setup.sh installs this for you and substitutes the volume path if you
 # use --config-dir. Requires podman >= 4.4 (Quadlet generator).
