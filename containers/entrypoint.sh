@@ -25,7 +25,16 @@ log "nqptp pid=$NQPTP_PID"
 
 # -u: log to stderr instead of syslog. -vv: verbose (paired with diagnostics
 # block in shairport-sync.conf). Drop -vv once we've captured the failure.
-shairport-sync -u -vv >&2 &
+# -a NAME overrides the `general.name` in shairport-sync.conf with the user's
+# chosen AirPlay display name. Set AUDIOLEAF_AIRPLAY_NAME in the Quadlet
+# (Environment=AUDIOLEAF_AIRPLAY_NAME="My Speaker") or compose env to change
+# what appears in the AirPlay picker; unset means the conf-file default.
+if [ -n "${AUDIOLEAF_AIRPLAY_NAME:-}" ]; then
+    log "AirPlay name override: $AUDIOLEAF_AIRPLAY_NAME"
+    shairport-sync -u -vv -a "$AUDIOLEAF_AIRPLAY_NAME" >&2 &
+else
+    shairport-sync -u -vv >&2 &
+fi
 SHAIRPORT_PID=$!
 log "shairport-sync pid=$SHAIRPORT_PID"
 

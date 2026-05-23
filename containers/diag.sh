@@ -24,8 +24,8 @@ section "mDNS browse (5s, _airplay._tcp + _raop._tcp)"
 timeout 5 avahi-browse -tr _airplay._tcp 2>&1 || true
 timeout 5 avahi-browse -tr _raop._tcp 2>&1 || true
 
-section "mDNS resolve Nano Viz"
-avahi-resolve -n "Nano Viz._airplay._tcp.local" 2>&1 || true
+section "mDNS resolve audioleaf"
+avahi-resolve -n "audioleaf._airplay._tcp.local" 2>&1 || true
 
 section "UDP listeners (mDNS 5353, PTP 319/320, AirPlay 7000)"
 if command -v ss >/dev/null 2>&1; then

@@ -34,6 +34,12 @@ Volume=/var/run/dbus:/var/run/dbus
 Volume=/var/run/avahi-daemon:/var/run/avahi-daemon
 # Pull updated image when 'systemctl start' fires after upstream tags move.
 AutoUpdate=registry
+# Override the AirPlay display name that appears in the iPhone/Mac picker.
+# Default (baked into shairport-sync.conf) is "audioleaf". Edit + uncomment
+# and run `sudo systemctl daemon-reload && sudo systemctl restart audioleaf`.
+# pi/setup.sh --airplay-name="..." can manage this line for you.
+#Environment=AUDIOLEAF_AIRPLAY_NAME=audioleaf
+
 # Uncomment to dump every parsed shairport metadata item to journalctl
 # (decoded fourcc/code, length, UTF-8 or hex preview). After editing:
 #   sudo systemctl daemon-reload && sudo systemctl restart audioleaf

@@ -17,6 +17,10 @@
 #   --config-dir=DIR      override the default config dir
 #   --image-tag=TAG       container image tag (default: "dev" on non-main git
 #                         branches, "latest" otherwise)
+#   --airplay-name=NAME   AirPlay display name advertised on mDNS (the name
+#                         that appears in the iPhone/Mac AirPlay picker).
+#                         Default leaves the image's built-in value. Spaces
+#                         are allowed; quote the value when calling.
 
 set -euo pipefail
 
@@ -27,6 +31,7 @@ FORCE_COMPOSE=0
 CONFIG_DIR=""           # resolved after preflight; "" means "pick default"
 IMAGE_TAG=""
 INSTANCE_NAME="audioleaf"
+AIRPLAY_NAME=""
 COMPOSE_URL="https://raw.githubusercontent.com/Weekendsuperhero-io/audioleaf/main/containers/compose.yaml"
 QUADLET_URL="https://raw.githubusercontent.com/Weekendsuperhero-io/audioleaf/main/containers/audioleaf.container"
 
@@ -51,8 +56,19 @@ for arg in "$@"; do
                 exit 2
             fi
             ;;
+        --airplay-name=*)
+            AIRPLAY_NAME="${arg#*=}"
+            # mDNS rejects control characters and very long names. Spaces are
+            # fine. Strip leading/trailing whitespace; reject anything obvious.
+            AIRPLAY_NAME="${AIRPLAY_NAME#"${AIRPLAY_NAME%%[![:space:]]*}"}"
+            AIRPLAY_NAME="${AIRPLAY_NAME%"${AIRPLAY_NAME##*[![:space:]]}"}"
+            if [[ -z "$AIRPLAY_NAME" || ${#AIRPLAY_NAME} -gt 63 || "$AIRPLAY_NAME" == *$'\n'* ]]; then
+                echo "ERROR: --airplay-name must be 1-63 printable chars, no newlines." >&2
+                exit 2
+            fi
+            ;;
         -h|--help)
-            sed -n '2,18p' "$0" | sed 's/^# \?//'
+            sed -n '2,23p' "$0" | sed 's/^# \?//'
             exit 0
             ;;
         *)
@@ -321,9 +337,15 @@ if (( DEPLOY )) && (( ENABLE_SYSTEMD )); then
     if [[ "$INSTANCE_NAME" != "audioleaf" ]]; then
         sed_args+=(-e "s|^ContainerName=audioleaf$|ContainerName=${INSTANCE_NAME}|")
     fi
+    if [[ -n "$AIRPLAY_NAME" ]]; then
+        # Uncomment the placeholder and set the value. Escape sed metacharacters
+        # in the name so spaces / regex chars survive cleanly.
+        escaped_airplay_name="$(printf '%s' "$AIRPLAY_NAME" | sed 's/[\\&|]/\\&/g')"
+        sed_args+=(-e "s|^#Environment=AUDIOLEAF_AIRPLAY_NAME=.*|Environment=AUDIOLEAF_AIRPLAY_NAME=${escaped_airplay_name}|")
+    fi
     if (( ${#sed_args[@]} )); then
         sed "${sed_args[@]}" "$quadlet_src" > "$quadlet_dest"
-        log "Rewrote Quadlet (name=$INSTANCE_NAME, config-dir=$CONFIG_DIR, image tag=$IMAGE_TAG)."
+        log "Rewrote Quadlet (name=$INSTANCE_NAME, config-dir=$CONFIG_DIR, image tag=$IMAGE_TAG${AIRPLAY_NAME:+, airplay-name=$AIRPLAY_NAME})."
     else
         cp "$quadlet_src" "$quadlet_dest"
     fi
@@ -399,6 +421,7 @@ cat <<EOF
 Audioleaf is set up.
 
   Instance:      $INSTANCE_NAME
+  AirPlay name:  ${AIRPLAY_NAME:-<image default ("audioleaf")>}
   Web UI:        http://${host_ip}:8787
   Config dir:    $CONFIG_DIR/config
   Devices file:  $CONFIG_DIR/config/nl_devices.toml  (host path; container sees /root/.config/audioleaf/nl_devices.toml)

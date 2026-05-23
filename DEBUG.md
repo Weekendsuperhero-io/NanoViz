@@ -2,7 +2,7 @@
 
 ## Symptom
 
-On the Raspberry Pi, the **"Nano Viz"** AirPlay receiver disappears from the
+On the Raspberry Pi, the **"audioleaf"** AirPlay receiver disappears from the
 iPhone/Mac AirPlay picker after audio is paused for a long time. Even
 `podman compose down && podman compose up -d` does not bring it back.
 
@@ -62,12 +62,12 @@ This is what "working" looks like. We diff it against the failure capture.
 
 ### 3. Reproduce the failure
 
-1. From iPhone/Mac, select **"Nano Viz"** in the AirPlay picker.
+1. From iPhone/Mac, select **"audioleaf"** in the AirPlay picker.
 2. Play a track for ~30 seconds.
 3. **Pause.** Note the timestamp.
 4. Walk away. Check the picker every ~15 minutes.
 
-### 4. The instant "Nano Viz" disappears from the picker
+### 4. The instant "audioleaf" disappears from the picker
 
 Don't fix anything yet. Capture state first:
 
@@ -80,7 +80,7 @@ cp /tmp/audioleaf-baseline.log /tmp/failure-podman.log
 
 # Optional: from a SECOND device on the same network, confirm it's not just
 # the source device's mDNS cache lying:
-avahi-browse -ar -t | grep -i 'nano viz'
+avahi-browse -ar -t | grep -i 'audioleaf'
 ```
 
 ### 5. Now test whether down/up recovers
@@ -93,7 +93,7 @@ podman exec audioleaf /usr/local/bin/diag.sh > /tmp/failure-after-restart.txt 2>
 ```
 
 If `failure-after-restart.txt` shows shairport/avahi/nqptp running and mDNS
-advertising "Nano Viz" but the iPhone/Mac picker still doesn't show it → it's
+advertising "audioleaf" but the iPhone/Mac picker still doesn't show it → it's
 a source-device cache issue, not a server issue. If it still doesn't show in
 `avahi-browse` from inside the container after restart → host-side state is
 poisoned (most likely).
@@ -107,7 +107,7 @@ Diff `failure-diag.txt` against `healthy-baseline.txt`:
   restart. Phase 2 = process supervisor (s6-overlay or simple restart loop) +
   read the stderr in `failure-podman.log` to find the crash reason.
 - **`shairport-sync` alive, but `avahi-browse` from inside the container
-  doesn't show "Nano Viz"** → mDNS deregistration. Look at `avahi` lines in
+  doesn't show "audioleaf"** → mDNS deregistration. Look at `avahi` lines in
   `failure-podman.log` for "withdrawing" / "Server disappeared" / dbus errors.
   Phase 2 = avahi/dbus startup ordering or shairport mDNS renewal.
 - **`avahi-browse` shows it from inside the container, but the second device's
@@ -146,7 +146,7 @@ Diff `failure-diag.txt` against `healthy-baseline.txt`:
 ## Avahi "name collision, renaming to NAME #N" loop
 
 If the journal shows shairport-sync rapidly incrementing its mDNS service
-name (`Nano Viz #2`, `#3`, `#4`, ...), the host avahi-daemon has a stale
+name (`audioleaf #2`, `#3`, `#4`, ...), the host avahi-daemon has a stale
 registration cached from a previous container run that didn't deregister.
 Fix in one shot:
 
