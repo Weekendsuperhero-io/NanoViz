@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# nanoviz — Raspberry Pi container setup (podman only).
+# NanoViz — Raspberry Pi container setup (podman only).
 #
 # Usage:
 #   sudo ./pi/setup.sh                      # full install + deploy

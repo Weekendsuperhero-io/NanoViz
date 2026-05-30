@@ -1,8 +1,8 @@
 # NanoViz
 
 A Raspberry Pi AirPlay receiver that lights up your Nanoleaf panels in time with
-the music. Stream from any iOS/macOS device, and your Shapes / Canvas /
-Elements / Light Panels become a reactive visualizer driven by what's playing.
+the music. Stream from any iPhone or Mac, and your Nanoleaf panels become a
+reactive music visualizer.
 
 ![NanoViz dashboard](Assets/dashboard.png)
 
@@ -10,10 +10,9 @@ The Pi runs a single container that bundles `shairport-sync` (AirPlay 2 via
 `nqptp`), the audio visualizer, and a web control panel. Pair your Nanoleaf
 device from the browser, then play to the AirPlay receiver — that's it.
 
-> **Note:** This is a fork of the original audioleaf that pivoted from a
-> terminal-only macOS tool into a Pi-first AirPlay appliance with a web UI.
-> Most of the original TUI features (keybinds, dump commands, native GUI) have
-> been replaced by the web app. See [CHANGELOG.md](CHANGELOG.md) for history.
+> NanoViz started as a fork of audioleaf and has evolved into a complete
+> Raspberry Pi AirPlay receiver + Nanoleaf visualizer appliance. See
+> [CHANGELOG.md](CHANGELOG.md) for history.
 
 ## Features
 
@@ -56,12 +55,33 @@ The installer:
 5. Installs a polkit rule so the `audio` group can `systemctl start/stop/restart`
    without sudo.
 
-After install:
+After install, do these steps **in order**:
 
-- Web UI: `http://<pi-ip>:8787`
-- Pair your Nanoleaf from the **Devices → Pair new device** card.
-- AirPlay to the receiver (default name **nanoviz**).
-- Log out and back in once if the script added you to new groups.
+1. Open the web UI at `http://<pi-ip>:8787`
+
+2. **Set the audio backend** (most important step):
+   - Go to **Visualizer settings** → **Audio Backend**
+   - Paste exactly this (including the commas and numbers):
+
+     ```
+     hw:CARD=Loopback,DEV=1
+     ```
+
+   - Save the setting. This tells NanoViz to listen to the audio coming from AirPlay on your Pi.
+
+3. Pair your Nanoleaf device from the **Devices → Pair new device** card.
+
+4. AirPlay from your iPhone or Mac to the receiver (it will appear as **nanoviz** or whatever you set with `--airplay-name`).
+
+Log out and back in once if the install script added you to new groups.
+
+**How to find the correct audio backend string on your Pi (only if the above doesn't work):**
+
+```bash
+aplay -l | grep -i loopback
+```
+
+Use the `hw:CARD=...,DEV=...` value for the Loopback card that shairport-sync is sending audio to (usually `DEV=1`).
 
 ### Install flags
 
@@ -183,7 +203,7 @@ UI edits the running config in memory; click **Save** to persist.
 default_nl_device_name = "Shapes AC01"
 
 [visualizer_config]
-audio_backend = "default"        # ALSA loopback on the Pi
+audio_backend = "hw:CARD=Loopback,DEV=1"   # Raspberry Pi with default snd-aloop setup (see "After install" section above)
 freq_range = [20, 4500]
 color_source = "palette"          # "palette" or "artwork"
 palette_name = "Sunset"           # any palette name saved on the device

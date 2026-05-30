@@ -1,0 +1,16 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  # We primarily release via containers for the Pi use case.
+  # This job can be extended later with binary releases if desired.
+  container-release:
+    needs: [] # Container build is triggered on tags via container.yaml
+    runs-on: ubuntu-latest
+    steps:
+      - name: Note
+        run: echo "Container images are built and published by container.yaml on tag push. No additional steps needed here yet."

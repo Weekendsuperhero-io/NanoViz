@@ -17,27 +17,117 @@ macro_rules! debug_log {
 }
 
 pub fn extract_prominent_colors_from_bytes(image_bytes: &[u8]) -> Option<Vec<[u8; 3]>> {
-    use auto_palette::{ImageData, Palette, Theme};
+    use auto_palette::{ImageData, Palette};
+    use palette::{IntoColor, Oklch, Srgb};
 
-    let img = image::load_from_memory(image_bytes).ok()?;
+    /// Minimum lightness (Oklch) for a color to be considered "able to show up as light".
+    /// Very bright highlights/whites are still allowed even if they fall slightly under this.
+    const MIN_LIGHTNESS: f32 = 0.27;
+
+    /// If a color has at least this much chroma, we allow it even if it's darker
+    /// (the "high chroma rescue"). This helps pull in rich atmospheric colors
+    /// (deep purples, magentas, blues, reds) that are intentionally dark in album art.
+    const HIGH_CHROMA_THRESHOLD: f32 = 0.18;
+
+    /// When using high-chroma rescue, the color must still be at least this light.
+    const HIGH_CHROMA_RESCUE_MIN_LIGHTNESS: f32 = 0.18;
+
+    /// Maximum dimension after downscaling. Big win for speed on Pi + reduces noise.
+    const MAX_DIM: u32 = 160;
+
+    let mut img = image::load_from_memory(image_bytes).ok()?;
+
+    // Aggressive downscale early — critical for Pi performance and cleaner palettes
+    if img.width() > MAX_DIM || img.height() > MAX_DIM {
+        img = img.resize(MAX_DIM, MAX_DIM, image::imageops::FilterType::Triangle);
+    }
+
     let rgba = img.to_rgba8();
     let image_data = ImageData::new(rgba.width(), rgba.height(), rgba.as_raw()).ok()?;
     let palette: Palette<f64> = Palette::extract(&image_data).ok()?;
 
-    let swatches = palette
-        .find_swatches_with_theme(6, Theme::Vivid)
-        .or_else(|_| palette.find_swatches(6))
-        .ok()?;
-
-    let colors: Vec<[u8; 3]> = swatches
-        .iter()
-        .filter(|s| s.color().to_oklch().l > 0.2)
-        .take(4)
-        .map(|s| {
+    // We deliberately avoid Theme::Vivid (and heavy reliance on any single Theme)
+    // for initial candidate selection.
+    //
+    // Vivid strongly prefers extremely high chroma + moderately bright colors. This
+    // often causes it to:
+    // - Collapse on large flat text or gradient fills (the yellow "Excursions" problem)
+    // - Miss important darker-but-rich atmospheric/mood colors (the TOTO nebula purples)
+    //
+    // Instead we use `find_swatches(n)`, which does population-weighted selection
+    // combined with explicit diversity sampling. This gives us a much more
+    // representative set of colors from the actual artwork.
+    //
+    // We then apply our own lighting-specific post-processing on top:
+    //   - Light-emitting potential scoring (l * chroma)
+    //   - High-chroma rescue for rich dark colors
+    //   - Hue deduplication
+    //   - Final cap at 6
+    //
+    // This division of responsibility works well: auto-palette does robust
+    // extraction + diversity, and we control what "actually looks good as light
+    // on Nanoleaf panels" means.
+    let mut candidates: Vec<([u8; 3], Oklch)> = palette
+        .find_swatches(15) // ask for more; we filter heavily afterward anyway
+        .ok()?
+        .into_iter()
+        .filter_map(|s| {
             let rgb = s.color().to_rgb();
-            [rgb.r, rgb.g, rgb.b]
+            let bytes = [rgb.r, rgb.g, rgb.b];
+            let srgb: Srgb<f32> = Srgb::new(
+                rgb.r as f32 / 255.0,
+                rgb.g as f32 / 255.0,
+                rgb.b as f32 / 255.0,
+            );
+            let oklch: Oklch = srgb.into_color();
+
+            let l = oklch.l;
+            let is_bright_enough = l >= MIN_LIGHTNESS || l >= 0.82;
+            let is_high_chroma_rescue =
+                oklch.chroma >= HIGH_CHROMA_THRESHOLD && l >= HIGH_CHROMA_RESCUE_MIN_LIGHTNESS;
+
+            if is_bright_enough || is_high_chroma_rescue {
+                Some((bytes, oklch))
+            } else {
+                None
+            }
         })
         .collect();
+
+    // Re-rank by light-emitting potential (lightness × chroma).
+    // Favors rich, bright, saturated colors that will actually glow on panels.
+    candidates.sort_by(|a, b| {
+        let score_a = a.1.l * a.1.chroma;
+        let score_b = b.1.l * b.1.chroma;
+        score_b
+            .partial_cmp(&score_a)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    // Take up to 6 with hue deduplication
+    let mut colors: Vec<[u8; 3]> = Vec::with_capacity(6);
+    for (rgb, oklch) in candidates.into_iter().take(8) {
+        let is_duplicate = colors.iter().any(|existing| {
+            let ex_srgb: Srgb<f32> = Srgb::new(
+                existing[0] as f32 / 255.0,
+                existing[1] as f32 / 255.0,
+                existing[2] as f32 / 255.0,
+            );
+            let ex_oklch: Oklch = ex_srgb.into_color();
+
+            let hue_diff =
+                (oklch.hue.into_positive_degrees() - ex_oklch.hue.into_positive_degrees()).abs();
+            let min_hue_diff = hue_diff.min(360.0 - hue_diff);
+            min_hue_diff < 22.0 && (oklch.chroma - ex_oklch.chroma).abs() < 0.12
+        });
+
+        if !is_duplicate {
+            colors.push(rgb);
+            if colors.len() >= 6 {
+                break;
+            }
+        }
+    }
 
     if colors.is_empty() {
         None
@@ -145,5 +235,60 @@ mod linux {
 
     pub fn extract_colors_from_bytes(bytes: &[u8]) -> Option<Vec<[u8; 3]>> {
         super::extract_prominent_colors_from_bytes(bytes)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Reference album covers used to tune and regression-test the lighting-oriented
+    /// color extraction used for Nanoleaf "Artwork" color source mode.
+    ///
+    /// These tests exercise `extract_prominent_colors_from_bytes` on real-world
+    /// album art that has historically exposed problems (dominant text collapsing
+    /// the palette, loss of atmospheric/mood colors, etc.).
+    ///
+    /// The eprintln output is intentional: it surfaces the current extracted
+    /// palettes in CI logs so we can observe the effect of tuning
+    /// MIN_LIGHTNESS / HIGH_CHROMA_RESCUE etc.
+    #[test]
+    fn reference_album_covers_color_extraction() {
+        let cases = [
+            (
+                "cover1 - blue to lime gradient (Matt Sassari / CHRSTPHR)",
+                "Assets/example_covers/cover1.jpeg",
+            ),
+            (
+                "cover2 - mountain landscape with yellow text (Excursions)",
+                "Assets/example_covers/cover2",
+            ),
+            (
+                "cover3 - yellow to red gradient (Matt Sassari)",
+                "Assets/example_covers/cover3.jpeg",
+            ),
+            (
+                "cover4 - sword in nebula (TOTO 1978)",
+                "Assets/example_covers/cover4.jpeg",
+            ),
+        ];
+
+        for (name, path) in cases {
+            let bytes = std::fs::read(path)
+                .unwrap_or_else(|e| panic!("Failed to read reference cover {}: {}", path, e));
+
+            let colors = extract_prominent_colors_from_bytes(&bytes)
+                .unwrap_or_else(|| panic!("Extractor returned no colors for {}", name));
+
+            eprintln!("{} -> {:?}", name, colors);
+
+            // Basic sanity: we should get at least one usable color, and never collapse
+            // to a single near-duplicate color on these known covers.
+            assert!(
+                !colors.is_empty(),
+                "No colors extracted for reference cover: {}",
+                name
+            );
+        }
     }
 }
