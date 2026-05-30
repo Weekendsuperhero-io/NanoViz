@@ -21,10 +21,19 @@ pub const DEFAULT_GAIN: f32 = 1.0;
 pub const DEFAULT_TRANSITION_TIME: u16 = 2;
 pub const DEFAULT_TIME_WINDOW: f32 = 0.1875;
 
+/// Frequency range presets for cycling with the F key
+pub const FREQ_RANGE_PRESETS: [(u16, u16, &str); 5] = [
+    (20, 4500, "Full"),
+    (20, 300, "Sub Bass"),
+    (60, 1000, "Low-Mid"),
+    (200, 4500, "Mid-High"),
+    (1000, 12000, "Treble"),
+];
+
 // other
-pub const DEFAULT_CONFIG_DIR: &str = "audioleaf";
+pub const DEFAULT_CONFIG_DIR: &str = "nanoviz";
 pub const DEFAULT_CONFIG_FILE: &str = "config.toml";
 pub const DEFAULT_DEVICES_FILE: &str = "nl_devices.toml";
-pub const DEFAULT_BACKTRACE_FILE: &str = "audioleaf_backtrace.log";
+pub const DEFAULT_BACKTRACE_FILE: &str = "nanoviz_backtrace.log";
 pub const NL_API_PORT: u16 = 16021;
 pub const NL_UDP_PORT: u16 = 60222;

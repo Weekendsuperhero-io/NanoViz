@@ -1,0 +1,16 @@
+name: Update PR Description
+
+on:
+  pull_request:
+    types: [opened, edited]
+
+jobs:
+  update-pr:
+    uses: weekendsuperhero-io/platform-tools/.github/workflows/reusable-pr-description.yml@main
+    with:
+      trigger-phrase: "@agent pr-title"
+      # Send full commit message bodies (not just `--oneline` subjects) so
+      # the LLM has access to multi-paragraph commit rationale when composing
+      # the PR description. See platform-tools commit 1aeab33.
+      commit-format: full
+    secrets: inherit

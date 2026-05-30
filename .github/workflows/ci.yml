@@ -1,0 +1,23 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  ci:
+    uses: weekendsuperhero-io/platform-tools/.github/workflows/reusable-rust-ci.yml@main
+    with:
+      # ALSA dev libs on Linux for cpal
+      linux-packages: libasound2-dev pkg-config
+      rust-cache-provider: github
+      test-command: cargo test --all-features -- --nocapture
+      build-matrix-json: >-
+        [
+          {"os":"ubuntu-latest","target":"x86_64-unknown-linux-gnu"},
+          {"os":"macos-latest","target":"x86_64-apple-darwin"},
+          {"os":"macos-latest","target":"aarch64-apple-darwin"}
+        ]
+    secrets: inherit

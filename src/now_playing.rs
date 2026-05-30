@@ -16,6 +16,126 @@ macro_rules! debug_log {
     };
 }
 
+pub fn extract_prominent_colors_from_bytes(image_bytes: &[u8]) -> Option<Vec<[u8; 3]>> {
+    use auto_palette::{ImageData, Palette};
+    use palette::{IntoColor, Oklch, Srgb};
+
+    /// Minimum lightness (Oklch) for a color to be considered "able to show up as light".
+    /// Very bright highlights/whites are still allowed even if they fall slightly under this.
+    const MIN_LIGHTNESS: f32 = 0.27;
+
+    /// If a color has at least this much chroma, we allow it even if it's darker
+    /// (the "high chroma rescue"). This helps pull in rich atmospheric colors
+    /// (deep purples, magentas, blues, reds) that are intentionally dark in album art.
+    const HIGH_CHROMA_THRESHOLD: f32 = 0.18;
+
+    /// When using high-chroma rescue, the color must still be at least this light.
+    const HIGH_CHROMA_RESCUE_MIN_LIGHTNESS: f32 = 0.18;
+
+    /// Maximum dimension after downscaling. Big win for speed on Pi + reduces noise.
+    const MAX_DIM: u32 = 160;
+
+    let mut img = image::load_from_memory(image_bytes).ok()?;
+
+    // Aggressive downscale early — critical for Pi performance and cleaner palettes
+    if img.width() > MAX_DIM || img.height() > MAX_DIM {
+        img = img.resize(MAX_DIM, MAX_DIM, image::imageops::FilterType::Triangle);
+    }
+
+    let rgba = img.to_rgba8();
+    let image_data = ImageData::new(rgba.width(), rgba.height(), rgba.as_raw()).ok()?;
+    let palette: Palette<f64> = Palette::extract(&image_data).ok()?;
+
+    // We deliberately avoid Theme::Vivid (and heavy reliance on any single Theme)
+    // for initial candidate selection.
+    //
+    // Vivid strongly prefers extremely high chroma + moderately bright colors. This
+    // often causes it to:
+    // - Collapse on large flat text or gradient fills (the yellow "Excursions" problem)
+    // - Miss important darker-but-rich atmospheric/mood colors (the TOTO nebula purples)
+    //
+    // Instead we use `find_swatches(n)`, which does population-weighted selection
+    // combined with explicit diversity sampling. This gives us a much more
+    // representative set of colors from the actual artwork.
+    //
+    // We then apply our own lighting-specific post-processing on top:
+    //   - Light-emitting potential scoring (l * chroma)
+    //   - High-chroma rescue for rich dark colors
+    //   - Hue deduplication
+    //   - Final cap at 6
+    //
+    // This division of responsibility works well: auto-palette does robust
+    // extraction + diversity, and we control what "actually looks good as light
+    // on Nanoleaf panels" means.
+    let mut candidates: Vec<([u8; 3], Oklch)> = palette
+        .find_swatches(15) // ask for more; we filter heavily afterward anyway
+        .ok()?
+        .into_iter()
+        .filter_map(|s| {
+            let rgb = s.color().to_rgb();
+            let bytes = [rgb.r, rgb.g, rgb.b];
+            let srgb: Srgb<f32> = Srgb::new(
+                rgb.r as f32 / 255.0,
+                rgb.g as f32 / 255.0,
+                rgb.b as f32 / 255.0,
+            );
+            let oklch: Oklch = srgb.into_color();
+
+            let l = oklch.l;
+            let is_bright_enough = l >= MIN_LIGHTNESS || l >= 0.82;
+            let is_high_chroma_rescue =
+                oklch.chroma >= HIGH_CHROMA_THRESHOLD && l >= HIGH_CHROMA_RESCUE_MIN_LIGHTNESS;
+
+            if is_bright_enough || is_high_chroma_rescue {
+                Some((bytes, oklch))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // Re-rank by light-emitting potential (lightness × chroma).
+    // Favors rich, bright, saturated colors that will actually glow on panels.
+    candidates.sort_by(|a, b| {
+        let score_a = a.1.l * a.1.chroma;
+        let score_b = b.1.l * b.1.chroma;
+        score_b
+            .partial_cmp(&score_a)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    // Take up to 6 with hue deduplication
+    let mut colors: Vec<[u8; 3]> = Vec::with_capacity(6);
+    for (rgb, oklch) in candidates.into_iter().take(8) {
+        let is_duplicate = colors.iter().any(|existing| {
+            let ex_srgb: Srgb<f32> = Srgb::new(
+                existing[0] as f32 / 255.0,
+                existing[1] as f32 / 255.0,
+                existing[2] as f32 / 255.0,
+            );
+            let ex_oklch: Oklch = ex_srgb.into_color();
+
+            let hue_diff =
+                (oklch.hue.into_positive_degrees() - ex_oklch.hue.into_positive_degrees()).abs();
+            let min_hue_diff = hue_diff.min(360.0 - hue_diff);
+            min_hue_diff < 22.0 && (oklch.chroma - ex_oklch.chroma).abs() < 0.12
+        });
+
+        if !is_duplicate {
+            colors.push(rgb);
+            if colors.len() >= 6 {
+                break;
+            }
+        }
+    }
+
+    if colors.is_empty() {
+        None
+    } else {
+        Some(colors)
+    }
+}
+
 /// Returns the title of the currently playing track.
 pub fn get_track_title() -> Option<String> {
     #[cfg(target_os = "macos")]
@@ -25,10 +145,6 @@ pub fn get_track_title() -> Option<String> {
     #[cfg(target_os = "linux")]
     {
         linux::get_track_title()
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    {
-        None
     }
 }
 
@@ -47,269 +163,32 @@ pub fn fetch_artwork_and_palette() -> Option<(Vec<u8>, Vec<[u8; 3]>)> {
         let colors = linux::extract_colors_from_bytes(&bytes)?;
         Some((bytes, colors))
     }
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    {
-        None
-    }
 }
 
-// ── macOS — ScriptingBridge ──────────────────────────────────────────────────
+// ── macOS — MediaRemote.framework via media-remote crate ─────────────────────
 
 #[cfg(target_os = "macos")]
 mod macos {
-    use objc2::msg_send;
-    use objc2::rc::Retained;
-    use objc2::runtime::{AnyClass, AnyObject};
-    use objc2_foundation::NSString;
-
-    #[link(name = "ScriptingBridge", kind = "framework")]
-    unsafe extern "C" {}
-
     pub fn get_track_title() -> Option<String> {
-        sb_spotify_title().or_else(sb_apple_music_title)
+        use media_remote::NowPlayingPerl;
+        let np = NowPlayingPerl::new();
+        let guard = np.get_info();
+        guard.as_ref()?.title.clone()
     }
 
     pub fn fetch_artwork_bytes() -> Option<Vec<u8>> {
-        sb_spotify_artwork().or_else(sb_apple_music_artwork)
-    }
-
-    // ── ScriptingBridge helpers ───────────────────────────────────────────────
-
-    /// Open a scripting bridge to a running application.
-    /// Returns the app AND whether it is actively playing.
-    /// Separated from player-state check so callers can decide if they need playing state.
-    fn sb_app(bundle_id: &str) -> Option<Retained<AnyObject>> {
-        unsafe {
-            let cls = AnyClass::get(c"SBApplication")?;
-            let bid = NSString::from_str(bundle_id);
-            let app: Option<Retained<AnyObject>> =
-                msg_send![cls, applicationWithBundleIdentifier: &*bid];
-            let app = app?;
-            let running: bool = msg_send![&*app, isRunning];
-            if !running {
-                debug_log!("DEBUG now_playing: {} not running", bundle_id);
-                return None;
-            }
-            Some(app)
-        }
-    }
-
-    /// Check if an app's player state is "playing" (four-char code 'kPSP').
-    fn is_playing(app: &AnyObject) -> bool {
-        unsafe {
-            let state: u32 = msg_send![app, playerState];
-            debug_log!("DEBUG now_playing: playerState = 0x{:08X}", state);
-            // 'kPSP' = playing
-            state == 0x6b505350
-        }
-    }
-
-    // ── Spotify via ScriptingBridge ───────────────────────────────────────────
-
-    fn sb_spotify_title() -> Option<String> {
-        let app = sb_app("com.spotify.client")?;
-        if !is_playing(&app) {
-            return None;
-        }
-        unsafe {
-            let track: Option<Retained<AnyObject>> = msg_send![&*app, currentTrack];
-            let track = track?;
-            let name: Option<Retained<NSString>> = msg_send![&*track, name];
-            let result = name.map(|s| s.to_string());
-            debug_log!("DEBUG now_playing: Spotify title = {:?}", result);
-            result
-        }
-    }
-
-    fn sb_spotify_artwork() -> Option<Vec<u8>> {
-        let app = sb_app("com.spotify.client")?;
-        if !is_playing(&app) {
-            return None;
-        }
-        unsafe {
-            let track: Option<Retained<AnyObject>> = msg_send![&*app, currentTrack];
-            let track = track?;
-            let url: Option<Retained<NSString>> = msg_send![&*track, artworkUrl];
-            let url = url?;
-            let url_str = url.to_string();
-            debug_log!("DEBUG now_playing: Spotify artwork URL = {}", url_str);
-            reqwest::blocking::get(&url_str)
-                .ok()?
-                .bytes()
-                .ok()
-                .map(|b| b.to_vec())
-        }
-    }
-
-    // ── Apple Music via ScriptingBridge ───────────────────────────────────────
-
-    fn sb_apple_music_title() -> Option<String> {
-        let app = sb_app("com.apple.Music")?;
-        if !is_playing(&app) {
-            return None;
-        }
-        unsafe {
-            let track: Option<Retained<AnyObject>> = msg_send![&*app, currentTrack];
-            eprintln!(
-                "DEBUG now_playing: Apple Music currentTrack = {:?}",
-                track.is_some()
-            );
-            let track = track?;
-            let name: Option<Retained<NSString>> = msg_send![&*track, name];
-            let result = name.map(|s| s.to_string());
-            debug_log!("DEBUG now_playing: Apple Music title = {:?}", result);
-            result
-        }
-    }
-
-    fn sb_apple_music_artwork() -> Option<Vec<u8>> {
-        let app = sb_app("com.apple.Music")?;
-        if !is_playing(&app) {
-            return None;
-        }
-        unsafe {
-            let track: Option<Retained<AnyObject>> = msg_send![&*app, currentTrack];
-            let track = track?;
-
-            // Get the artworks SBElementArray from the track.
-            let artworks: *mut AnyObject = msg_send![&*track, artworks];
-            eprintln!(
-                "DEBUG now_playing: artworks ptr null = {}",
-                artworks.is_null()
-            );
-            if !artworks.is_null() {
-                // Don't trust count — go straight to objectAtIndex:0.
-                // SBElementArray sends a targeted Apple Event for the specific
-                // element, which can succeed even when count reports 0.
-                let artwork: *mut AnyObject = msg_send![artworks, objectAtIndex: 0usize];
-                eprintln!(
-                    "DEBUG now_playing: artwork[0] ptr null = {}",
-                    artwork.is_null()
-                );
-                if !artwork.is_null() {
-                    // Properties on SBObject return lazy proxies — call `get`
-                    // to force the Apple Event and materialize the real object.
-
-                    // Try rawData first
-                    let raw_proxy: *mut AnyObject = msg_send![artwork, rawData];
-                    if !raw_proxy.is_null() {
-                        let raw: *mut AnyObject = msg_send![raw_proxy, get];
-                        debug_log!("DEBUG now_playing: rawData.get null = {}", raw.is_null());
-                        if !raw.is_null() {
-                            let len: usize = msg_send![raw, length];
-                            debug_log!("DEBUG now_playing: rawData length = {}", len);
-                            if len > 0 {
-                                let ptr: *const u8 = msg_send![raw, bytes];
-                                if !ptr.is_null() {
-                                    let bytes = std::slice::from_raw_parts(ptr, len).to_vec();
-                                    eprintln!(
-                                        "DEBUG now_playing: rawData artwork {} bytes",
-                                        bytes.len()
-                                    );
-                                    return Some(bytes);
-                                }
-                            }
-                        }
-                    }
-
-                    // Try data property (MusicPicture)
-                    let data_proxy: *mut AnyObject = msg_send![artwork, data];
-                    if !data_proxy.is_null() {
-                        let data: *mut AnyObject = msg_send![data_proxy, get];
-                        debug_log!("DEBUG now_playing: data.get null = {}", data.is_null());
-                        if !data.is_null() {
-                            let len: usize = msg_send![data, length];
-                            debug_log!("DEBUG now_playing: data length = {}", len);
-                            if len > 0 {
-                                let ptr: *const u8 = msg_send![data, bytes];
-                                if !ptr.is_null() {
-                                    let bytes = std::slice::from_raw_parts(ptr, len).to_vec();
-                                    eprintln!(
-                                        "DEBUG now_playing: data artwork {} bytes",
-                                        bytes.len()
-                                    );
-                                    return Some(bytes);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // iTunes Search API using artist + album.
-            debug_log!("DEBUG now_playing: falling back to iTunes Search API");
-            let name: Option<Retained<NSString>> = msg_send![&*track, name];
-            let artist: Option<Retained<NSString>> = msg_send![&*track, artist];
-            let album: Option<Retained<NSString>> = msg_send![&*track, album];
-            let query = match (&artist, &album, &name) {
-                (Some(a), Some(al), _) => format!("{} {}", a, al),
-                (Some(a), None, Some(n)) => format!("{} {}", a, n),
-                (_, _, Some(n)) => n.to_string(),
-                _ => return None,
-            };
-            debug_log!("DEBUG now_playing: iTunes Search API query = {:?}", query);
-            itunes_search_artwork(&query)
-        }
-    }
-
-    /// Look up album artwork via the public iTunes Search API.
-    fn itunes_search_artwork(query: &str) -> Option<Vec<u8>> {
-        let url = format!(
-            "https://itunes.apple.com/search?term={}&media=music&limit=1",
-            urlencoded(query)
-        );
-        let resp: serde_json::Value = reqwest::blocking::get(&url).ok()?.json().ok()?;
-        let art_url = resp["results"][0]["artworkUrl100"].as_str()?;
-        // Request a larger image (600x600 instead of 100x100)
-        let art_url = art_url.replace("100x100", "600x600");
-        debug_log!("DEBUG now_playing: iTunes artwork URL = {}", art_url);
-        reqwest::blocking::get(&art_url)
-            .ok()?
-            .bytes()
-            .ok()
-            .map(|b| b.to_vec())
-    }
-
-    fn urlencoded(s: &str) -> String {
-        let mut out = String::with_capacity(s.len() * 2);
-        for b in s.bytes() {
-            match b {
-                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' => {
-                    out.push(b as char);
-                }
-                b' ' => out.push('+'),
-                _ => {
-                    out.push('%');
-                    out.push_str(&format!("{:02X}", b));
-                }
-            }
-        }
-        out
+        use media_remote::NowPlayingPerl;
+        let np = NowPlayingPerl::new();
+        let guard = np.get_info();
+        let info = guard.as_ref()?;
+        let cover = info.album_cover.as_ref()?;
+        let mut buf = std::io::Cursor::new(Vec::new());
+        cover.write_to(&mut buf, image::ImageFormat::Jpeg).ok()?;
+        Some(buf.into_inner())
     }
 
     pub fn extract_colors(image_bytes: &[u8]) -> Option<Vec<[u8; 3]>> {
-        use auto_palette::{ImageData, Palette};
-
-        let img = image::load_from_memory(image_bytes).ok()?;
-        let rgba = img.to_rgba8();
-        let image_data = ImageData::new(rgba.width(), rgba.height(), rgba.as_raw()).ok()?;
-        let palette: Palette<f64> = Palette::extract(&image_data).ok()?;
-        let mut swatches = palette.swatches().to_vec();
-        swatches.sort_by_key(|s| std::cmp::Reverse(s.population()));
-        let colors: Vec<[u8; 3]> = swatches
-            .iter()
-            .filter(|s| s.color().to_oklch().l > 0.15)
-            .take(4)
-            .map(|s| {
-                let rgb = s.color().to_rgb();
-                [rgb.r, rgb.g, rgb.b]
-            })
-            .collect();
-        if colors.is_empty() {
-            None
-        } else {
-            Some(colors)
-        }
+        super::extract_prominent_colors_from_bytes(image_bytes)
     }
 }
 
@@ -355,27 +234,61 @@ mod linux {
     }
 
     pub fn extract_colors_from_bytes(bytes: &[u8]) -> Option<Vec<[u8; 3]>> {
-        use auto_palette::{ImageData, Palette};
+        super::extract_prominent_colors_from_bytes(bytes)
+    }
+}
 
-        let img = image::load_from_memory(bytes).ok()?;
-        let rgba = img.to_rgba8();
-        let image_data = ImageData::new(rgba.width(), rgba.height(), rgba.as_raw()).ok()?;
-        let palette: Palette<f64> = Palette::extract(&image_data).ok()?;
-        let mut swatches = palette.swatches().to_vec();
-        swatches.sort_by_key(|s| std::cmp::Reverse(s.population()));
-        let colors: Vec<[u8; 3]> = swatches
-            .iter()
-            .filter(|s| s.color().to_oklch().l > 0.15)
-            .take(4)
-            .map(|s| {
-                let rgb = s.color().to_rgb();
-                [rgb.r, rgb.g, rgb.b]
-            })
-            .collect();
-        if colors.is_empty() {
-            None
-        } else {
-            Some(colors)
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Reference album covers used to tune and regression-test the lighting-oriented
+    /// color extraction used for Nanoleaf "Artwork" color source mode.
+    ///
+    /// These tests exercise `extract_prominent_colors_from_bytes` on real-world
+    /// album art that has historically exposed problems (dominant text collapsing
+    /// the palette, loss of atmospheric/mood colors, etc.).
+    ///
+    /// The eprintln output is intentional: it surfaces the current extracted
+    /// palettes in CI logs so we can observe the effect of tuning
+    /// MIN_LIGHTNESS / HIGH_CHROMA_RESCUE etc.
+    #[test]
+    fn reference_album_covers_color_extraction() {
+        let cases = [
+            (
+                "cover1 - blue to lime gradient (Matt Sassari / CHRSTPHR)",
+                "Assets/example_covers/cover1.jpeg",
+            ),
+            (
+                "cover2 - mountain landscape with yellow text (Excursions)",
+                "Assets/example_covers/cover2",
+            ),
+            (
+                "cover3 - yellow to red gradient (Matt Sassari)",
+                "Assets/example_covers/cover3.jpeg",
+            ),
+            (
+                "cover4 - sword in nebula (TOTO 1978)",
+                "Assets/example_covers/cover4.jpeg",
+            ),
+        ];
+
+        for (name, path) in cases {
+            let bytes = std::fs::read(path)
+                .unwrap_or_else(|e| panic!("Failed to read reference cover {}: {}", path, e));
+
+            let colors = extract_prominent_colors_from_bytes(&bytes)
+                .unwrap_or_else(|| panic!("Extractor returned no colors for {}", name));
+
+            eprintln!("{} -> {:?}", name, colors);
+
+            // Basic sanity: we should get at least one usable color, and never collapse
+            // to a single near-duplicate color on these known covers.
+            assert!(
+                !colors.is_empty(),
+                "No colors extracted for reference cover: {}",
+                name
+            );
         }
     }
 }
