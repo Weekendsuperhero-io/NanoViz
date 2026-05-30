@@ -28,6 +28,8 @@ device from the browser, then play to the AirPlay receiver — that's it.
   device itself; no static catalog to maintain.
 - **Web UI** — Pair devices, switch effects/palettes, see now-playing, live
   panel preview, and a layout visualizer.
+
+  ![Panel Layout visualizer](Assets/screenshots/panel-layout.png)
 - **Multi-instance** — Run more than one receiver per Pi with `--name=...`.
 
 ## Quick start (Raspberry Pi)
@@ -74,6 +76,22 @@ After install, do these steps **in order**:
 4. AirPlay from your iPhone or Mac to the receiver (it will appear as **nanoviz** or whatever you set with `--airplay-name`).
 
 Log out and back in once if the install script added you to new groups.
+
+### Viewing logs
+
+All output from NanoViz, shairport-sync, and nqptp goes to the system journal.
+
+```bash
+# Follow live logs (recommended)
+journalctl -fu nanoviz
+
+# For a named instance (example)
+journalctl -fu nanoviz-bedroom
+```
+
+Because the installer added you to the `systemd-journal` group, you can run this without `sudo`.
+
+**Pro tip:** If you're debugging AirPlay or audio issues, run the above and then trigger the behavior you're investigating (connect AirPlay, play music, pause, etc.).
 
 **How to find the correct audio backend string on your Pi (only if the above doesn't work):**
 
@@ -134,11 +152,15 @@ unless you pass `--purge`.
 
 1. Open the AirPlay menu on your iPhone / Mac and pick **nanoviz** (or
    whatever you set via `--airplay-name`).
+
+   ![AirPlay picker](Assets/screenshots/airplay-picker.png)
+
 2. Start playback. Panels react.
 3. Slide the volume bar on iOS/macOS — panel **brightness** tracks the
    slider. Audio playback volume is unaffected. Full details under
    [Brightness](#brightness).
-4. Open `http://<pi-ip>:8787` to change effect, palette, sort axis, or
+4. If you need to debug anything, see the [Viewing logs](#viewing-logs) section.
+5. Open `http://<pi-ip>:8787` to change effect, palette, sort axis, or
    audio sensitivity (`default_gain`) at runtime.
 
 ### Visualizer effects
@@ -158,6 +180,8 @@ Pick one in the web UI:
   shows the swatches inline.
 - **Artwork** — Extract colors from the current track's cover art. Falls
   back to the configured palette when nothing's playing.
+
+  ![Artwork palette extraction in action](Assets/screenshots/artwork-palette.png)
 
 ### Brightness
 

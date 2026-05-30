@@ -10,35 +10,14 @@ jobs:
   ci:
     uses: weekendsuperhero-io/platform-tools/.github/workflows/reusable-rust-ci.yml@main
     with:
-      # This project needs ALSA dev libs on Linux for cpal
-      setup-command: |
-        if [ "$RUNNER_OS" = "Linux" ]; then
-          sudo apt-get update
-          sudo apt-get install -y libasound2-dev pkg-config
-        fi
-      # Build the web frontend as part of the process
-      pre-build-command: |
-        cd web && pnpm install --frozen-lockfile && pnpm build && cd ..
+      # ALSA dev libs on Linux for cpal
+      linux-packages: libasound2-dev pkg-config
       rust-cache-provider: github
-      # Test command - use nextest if desired, or default cargo test
       test-command: cargo test --all-features -- --nocapture
-      # Build matrix focused on the platforms we care about
       build-matrix-json: >-
         [
           {"os":"ubuntu-latest","target":"x86_64-unknown-linux-gnu"},
           {"os":"macos-latest","target":"x86_64-apple-darwin"},
           {"os":"macos-latest","target":"aarch64-apple-darwin"}
         ]
-      # Produce a universal binary on macOS like the old custom workflow
-      post-build-command: |
-        if [ "$RUNNER_OS" = "macOS" ]; then
-          rustup target add x86_64-apple-darwin aarch64-apple-darwin
-          cargo build --release --target x86_64-apple-darwin
-          cargo build --release --target aarch64-apple-darwin
-          mkdir -p target/release
-          lipo -create \
-            target/x86_64-apple-darwin/release/nanoviz \
-            target/aarch64-apple-darwin/release/nanoviz \
-            -output target/release/nanoviz-universal || true
-        fi
     secrets: inherit
