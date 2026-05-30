@@ -28,7 +28,7 @@ fn fft(x: &mut [Complex32], y: &mut [Complex32], n: usize, step: usize) {
 /// Processes raw time-domain audio samples to produce frequency-domain spectrum amplitudes for visualization.
 ///
 /// Performs FFT on padded input (to next power of two), extracts positive frequencies,
-/// normalizes by sqrt(n), applies gain, and clamps amplitudes to [0,1] using x / sqrt(1 + x^2) sigmoid-like function.
+/// normalizes by sqrt(n), applies gain, and clamps amplitudes to \[0,1\] using x / sqrt(1 + x^2) sigmoid-like function.
 ///
 /// # Arguments
 ///
@@ -37,7 +37,7 @@ fn fft(x: &mut [Complex32], y: &mut [Complex32], n: usize, step: usize) {
 ///
 /// # Returns
 ///
-/// Vec<f32> of amplitude values for each frequency bin (up to Nyquist).
+/// `Vec<f32>` of amplitude values for each frequency bin (up to Nyquist).
 pub fn process(samples: Vec<f32>, gain: f32) -> Vec<f32> {
     let mut n = samples.len();
     let mut complex_samples = samples
@@ -70,7 +70,7 @@ pub fn process(samples: Vec<f32>, gain: f32) -> Vec<f32> {
 /// For each interval, tracks maximum amplitude (with equal loudness correction) and updates brightness
 /// with velocity-based decay/increase for smooth transitions. Uses cubic easing functions for rates.
 ///
-/// Brightness is a multiplier in [0,1] applied to the base Oklch color's lightness.
+/// Brightness is a multiplier in \[0,1\] applied to the base Oklch color's lightness.
 /// At 0 the panel is black; at 1 it shows the exact target color the user specified.
 ///
 /// # Arguments
@@ -78,7 +78,7 @@ pub fn process(samples: Vec<f32>, gain: f32) -> Vec<f32> {
 /// * `spectrum` - FFT-derived amplitudes for frequency bins.
 /// * `hz_per_bin` - Frequency resolution (Hz per bin in spectrum).
 /// * `min_freq`/`max_freq` - Frequency range to consider for color mapping.
-/// * `brightness` - Mutable slice of brightness multipliers [0,1] per panel (mutated).
+/// * `brightness` - Mutable slice of brightness multipliers \[0,1\] per panel (mutated).
 /// * `prev_max` - Previous max amplitudes per interval for delta computation (mutated).
 /// * `speed` - Velocity accumulators for brightness changes per interval (mutated).
 ///
@@ -153,7 +153,7 @@ pub fn update_brightness(
 /// * `spectrum` - FFT-derived amplitudes for frequency bins.
 /// * `hz_per_bin` - Frequency resolution (Hz per bin in spectrum).
 /// * `min_freq`/`max_freq` - Frequency range to consider.
-/// * `brightness` - Mutable slice of brightness multipliers [0,1] per panel (mutated).
+/// * `brightness` - Mutable slice of brightness multipliers \[0,1\] per panel (mutated).
 /// * `prev_max` - Previous max amplitudes per interval (mutated).
 /// * `speed` - Velocity accumulators per interval (mutated).
 pub fn update_brightness_wave(
@@ -207,7 +207,7 @@ pub fn update_brightness_wave(
 /// * `spectrum` - FFT-derived amplitudes for frequency bins.
 /// * `hz_per_bin` - Frequency resolution (Hz per bin in spectrum).
 /// * `min_freq`/`max_freq` - Frequency range to consider.
-/// * `brightness` - Mutable slice of brightness multipliers [0,1] per panel (mutated).
+/// * `brightness` - Mutable slice of brightness multipliers \[0,1\] per panel (mutated).
 /// * `prev_max` - Index 0: smoothed energy tracker (mutated).
 /// * `speed` - Ripple wave field (mutated).
 pub fn update_brightness_ripple(

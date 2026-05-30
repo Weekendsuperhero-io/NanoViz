@@ -180,7 +180,7 @@ pub fn request_get(url: &str) -> Result<String> {
 /// Repeats last color if fewer than `n`.
 /// Each RGB triplet is converted to Oklch preserving the perceptually correct hue, chroma, and lightness.
 /// The returned colors represent the **target** appearance at full brightness — the visualizer
-/// animates a separate brightness multiplier [0,1] that scales lightness, ensuring the original
+/// animates a separate brightness multiplier \[0,1\] that scales lightness, ensuring the original
 /// RGB color is faithfully reproduced at peak audio amplitude.
 ///
 /// Used to map palette colors to panel base colors in visualizer.

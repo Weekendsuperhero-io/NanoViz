@@ -122,7 +122,7 @@ impl Config {
     /// Supports comprehensive field validation and type conversion:
     /// - `audio_backend`: String for device name.
     /// - `freq_range`: 2-element array of u16 [min_hz, max_hz].
-    /// - `colors`: Array of [R,G,B] triplets or string name of predefined palette (e.g., "ocean-nightclub").
+    /// - `colors`: Array of \[R,G,B\] triplets or string name of predefined palette (e.g., "ocean-nightclub").
     /// - `default_gain`: f32 or i64, applied to spectrum amplitudes.
     /// - `transition_time`: u16 in 100ms units for Nanoleaf transitions (0 = instant).
     /// - `time_window`: f32 seconds for smoothing window.
@@ -135,7 +135,7 @@ impl Config {
     /// # Arguments
     ///
     /// * `visualizer_config` - Mutable reference to update.
-    /// * `t` - TOML table from [visualizer_config] section.
+    /// * `t` - TOML table from \[visualizer_config\] section.
     ///
     /// # Errors
     ///

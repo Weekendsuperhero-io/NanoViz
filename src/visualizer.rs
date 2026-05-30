@@ -489,7 +489,7 @@ impl Visualizer {
     /// Spawns thread that:
     /// - Registers panic handler.
     /// - Loops receiving audio samples and control messages.
-    /// - Processes FFT spectrum, updates per-panel brightness multiplier [0,1] from audio.
+    /// - Processes FFT spectrum, updates per-panel brightness multiplier \[0,1\] from audio.
     /// - Computes display colors: for each panel, scales base Oklch lightness by brightness,
     ///   so at peak audio the output exactly matches the user's original RGB palette color.
     /// - Sends display colors to panels via UDP with transition time.
