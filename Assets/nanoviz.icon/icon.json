@@ -54,8 +54,8 @@
               "value" : "automatic"
             }
           ],
-          "image-name" : "audioleaf-icon.svg",
-          "name" : "audioleaf-icon",
+          "image-name" : "nanoviz-icon.svg",
+          "name" : "nanoviz-icon",
           "position" : {
             "scale" : 2.75,
             "translation-in-points" : [

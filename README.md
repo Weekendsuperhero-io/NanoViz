@@ -4,7 +4,7 @@ A Raspberry Pi AirPlay receiver that lights up your Nanoleaf panels in time with
 the music. Stream from any iOS/macOS device, and your Shapes / Canvas /
 Elements / Light Panels become a reactive visualizer driven by what's playing.
 
-![NanoViz Demo](Assets/demo.gif)
+![NanoViz dashboard](Assets/dashboard.png)
 
 The Pi runs a single container that bundles `shairport-sync` (AirPlay 2 via
 `nqptp`), the audio visualizer, and a web control panel. Pair your Nanoleaf
@@ -115,8 +115,9 @@ unless you pass `--purge`.
 1. Open the AirPlay menu on your iPhone / Mac and pick **nanoviz** (or
    whatever you set via `--airplay-name`).
 2. Start playback. Panels react.
-3. Slide the volume bar — panels dim and brighten. Audio is unaffected
-   (`ignore_volume_control = "yes"` in shairport-sync.conf).
+3. Slide the volume bar on iOS/macOS — panel **brightness** tracks the
+   slider. Audio playback volume is unaffected. Full details under
+   [Brightness](#brightness).
 4. Open `http://<pi-ip>:8787` to change effect, palette, sort axis, or
    audio sensitivity (`default_gain`) at runtime.
 
@@ -137,6 +138,38 @@ Pick one in the web UI:
   shows the swatches inline.
 - **Artwork** — Extract colors from the current track's cover art. Falls
   back to the configured palette when nothing's playing.
+
+### Brightness
+
+Panel brightness is driven by the **AirPlay volume slider** on the
+streaming device (iPhone Control Center, macOS menu-bar volume, the
+volume slider in any AirPlay-aware app). Slide it up — panels get
+brighter; slide it down — panels dim.
+
+- **Audio is not affected.** The shipped `shairport-sync.conf` sets
+  `ignore_volume_control = "yes"`, so AirPlay volume events update
+  panel brightness only. Music stays at full volume the whole time. If
+  you want lower playback volume, use your speaker / amp's own volume,
+  not the AirPlay slider.
+- **Mapping.** `0 dB` (slider at the top) → brightness `100`; `-30 dB`
+  (slider at the bottom) → brightness `1`; linear in between. Tapping
+  **Mute** holds the current brightness rather than darkening the panels
+  (so a stray mute press doesn't kill the lights).
+- **Manual override in the web UI.** The brightness slider on each
+  device card in the web UI still works — set any value you like. The
+  next AirPlay volume event will take control again. This is intentional:
+  the AirPlay slider is the "live" knob; the web slider is for one-off
+  adjustments when nothing's playing.
+- **Connection behavior.** On AirPlay connect, the panels keep whatever
+  brightness they had before; brightness only changes when the slider
+  actually moves. (Previously the panels jumped to 100 on every connect.)
+- **`default_gain` is a separate knob.** It controls audio analysis
+  sensitivity (how loud the FFT input has to be before the visualizer
+  swings full-range), *not* panel brightness. Set it once and forget;
+  the volume slider is what you reach for daily.
+
+If you'd rather wire a different control to brightness, the underlying
+endpoint is `PUT /api/devices/{name}/state` with `{"brightness": 0-100}`.
 
 ## Configuration
 

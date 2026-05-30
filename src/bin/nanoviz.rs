@@ -40,7 +40,7 @@ use tower_http::{
 };
 
 #[derive(Parser, Debug)]
-#[command(version, about = "Audioleaf — Nanoleaf music visualizer", author)]
+#[command(version, about = "NanoViz — Nanoleaf music visualizer", author)]
 struct ApiOptions {
     /// Host interface to bind
     #[arg(long, default_value = "0.0.0.0")]
@@ -50,11 +50,11 @@ struct ApiOptions {
     #[arg(long, default_value_t = 8787)]
     port: u16,
 
-    /// Path to audioleaf's configuration file
+    /// Path to NanoViz's configuration file
     #[arg(long = "config")]
     config_file_path: Option<PathBuf>,
 
-    /// Path to audioleaf's database of known Nanoleaf devices
+    /// Path to NanoViz's database of known Nanoleaf devices
     #[arg(long = "devices")]
     devices_file_path: Option<PathBuf>,
 }
@@ -361,7 +361,7 @@ struct HealthResponse {
     version: &'static str,
     /// AirPlay receiver name advertised on mDNS. `None` when the
     /// `NANOVIZ_AIRPLAY_NAME` env var is unset and shairport-sync falls
-    /// back to its baked-in conf default ("audioleaf").
+    /// back to its baked-in conf default ("nanoviz").
     airplay_name: Option<String>,
 }
 
@@ -625,10 +625,7 @@ async fn main() -> Result<()> {
 
     let addr: SocketAddr = format!("{}:{}", options.host, options.port).parse()?;
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    println!(
-        "Audioleaf API listening on http://{}",
-        listener.local_addr()?
-    );
+    println!("NanoViz API listening on http://{}", listener.local_addr()?);
     if frontend_path.is_dir() {
         println!("Serving frontend from {}", frontend_dir);
     }

@@ -1,8 +1,8 @@
 [package]
 name = "nanoviz"
-version = "4.0.0"
+version = "1.0.0"
 edition = "2024"
-# Forked from audioleaf by Antoni Zasada (https://github.com/AntoniZasada/audioleaf).
+# Forked from audioleaf by Antoni Zasada (https://github.com/alfazet/audioleaf).
 # See NOTICE for fork lineage.
 authors = ["Antoni Zasada", "weekendsuperhero"]
 description = "Raspberry Pi AirPlay receiver that drives Nanoleaf panels as a music visualizer (forked from audioleaf)"

@@ -1607,7 +1607,7 @@ dependencies = [
 
 [[package]]
 name = "nanoviz"
-version = "4.0.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "auto-palette",
